@@ -1,129 +1,103 @@
 ﻿using System;
-using System.Data;
 using System.Data.OleDb;
+using System.Data;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using SummerPractice.DataAccess;
+using System.Windows.Forms;
 
 namespace SummerPractice
 {
-    // Аргумент выбора: Вынос логики безопасности и инициализации БД в отдельный класс 
-    // предотвращает случайное сохранение паролей в открытом виде в коде форм.
     public static class DatabaseManager
     {
-        private static readonly DataAccess.DataAccess dataAccess;
-
-        static DatabaseManager()
+        private static string GetConnectionString()
         {
-            // Динамический путь к БД (как мы обсуждали ранее)
             string dbName = "CourseWork.accdb";
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            string dbPath = System.IO.Path.Combine(basePath, dbName);
+            string dbPath = Path.Combine(basePath, dbName);
 
-            // Проверка наличия файла перед попыткой подключения
-            if (!System.IO.File.Exists(dbPath))
-                throw new FileNotFoundException($"Файл базы данных не найден по пути: {dbPath}. Проверьте настройки копирования файла в проект.");
+            if (!File.Exists(dbPath))
+                throw new FileNotFoundException($"Файл БД не найден: {dbPath}. Убедитесь, что CourseWork.accdb лежит в bin\\Debug\\...");
 
-            string connStr = $@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};";
-
-            // ПРОВЕРКА ДРАЙВЕРА: Попытка открыть соединение сразу при старте класса.
-            // Если драйвера нет, вылетит исключение, которое мы поймаем в форме входа.
-            try
-            {
-                using var testConn = new OleDbConnection(connStr);
-                testConn.Open();
-            }
-            catch (Exception ex) when (ex.Message.Contains("Provider"))
-            {
-                throw new Exception("Не установлен драйвер Microsoft ACE OLEDB. Пожалуйста, установите Access Database Engine.", ex);
-            }
-
-            dataAccess = new DataAccess.DataAccess(connStr);
-        }
-
-        public static string ConnectionString => dataAccess.GetType().GetField("_connectionString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dataAccess).ToString();
-
-        /// <summary>
-        /// Хеширование пароля с солью (Salt) используя SHA256.
-        /// Аргумент: Простой MD5 или хранение пароля в открытом виде ненадежны. 
-        /// SHA256 является стандартом для таких задач в .NET. Соль делает невозможным подбор по радужным таблицам.
-        /// </summary>
-        public static (string Hash, string Salt) HashPassword(string password)
-        {
-            byte[] saltBytes = new byte[16];
-            using (var rng = RandomNumberGenerator.Create())
-            {
-                rng.GetBytes(saltBytes);
-            }
-
-            byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
-            byte[] combinedBytes = new byte[saltBytes.Length + passwordBytes.Length];
-
-            Buffer.BlockCopy(saltBytes, 0, combinedBytes, 0, saltBytes.Length);
-            Buffer.BlockCopy(passwordBytes, 0, combinedBytes, saltBytes.Length, passwordBytes.Length);
-
-            using (var sha256 = SHA256.Create())
-            {
-                byte[] hashBytes = sha256.ComputeHash(combinedBytes);
-                return (Convert.ToBase64String(hashBytes), Convert.ToBase64String(saltBytes));
-            }
+            return $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};";
         }
 
         /// <summary>
-        /// Проверка пароля: берет сохраненную соль, добавляет введенный пароль, хеширует и сравнивает.
+        /// Хеширует пароль через SHA256 и возвращает HEX строку (64 символа).
         /// </summary>
-        public static bool VerifyPassword(string inputPassword, string storedHash, string storedSalt)
+        private static string HashPassword(string password)
         {
-            byte[] saltBytes = Convert.FromBase64String(storedSalt);
-            byte[] passwordBytes = Encoding.UTF8.GetBytes(inputPassword);
-            byte[] combinedBytes = new byte[saltBytes.Length + passwordBytes.Length];
+            using var sha256 = SHA256.Create();
+            byte[] sourceBytes = Encoding.UTF8.GetBytes(password);
+            byte[] hashBytes = sha256.ComputeHash(sourceBytes);
 
-            Buffer.BlockCopy(saltBytes, 0, combinedBytes, 0, saltBytes.Length);
-            Buffer.BlockCopy(passwordBytes, 0, combinedBytes, saltBytes.Length, passwordBytes.Length);
-
-            using (var sha256 = SHA256.Create())
-            {
-                byte[] computedHash = sha256.ComputeHash(combinedBytes);
-                string computedHashString = Convert.ToBase64String(computedHash);
-                return computedHashString == storedHash;
-            }
+            StringBuilder sb = new StringBuilder();
+            foreach (byte b in hashBytes)
+                sb.Append(b.ToString("x2")); // HEX строка, 64 символа
+            return sb.ToString();
         }
 
-        public static DataTable GetTableNames()
+        /// <summary>
+        /// Регистрирует пользователя: хеширует пароль и сохраняет в поле "Пароль".
+        /// </summary>
+        public static void RegisterUser(string login, string pass)
         {
-            // Используем системную таблицу MSysObjects для надежности, если GetOleDbSchemaTable падает
-            // Аргумент: Это более универсальный способ получения имен таблиц в Access, работающий даже в старых версиях драйверов.
-            string sql = "SELECT Name FROM MSysObjects WHERE Type = 1 AND Flags = 0 ORDER BY Name";
-            return dataAccess.GetData(sql);
+            using var conn = new OleDbConnection(GetConnectionString());
+            conn.Open();
+
+            // Проверка на дубликат логина
+            string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = @login";
+            using var checkCmd = new OleDbCommand(checkSql, conn);
+            checkCmd.Parameters.AddWithValue("@login", login);
+            int count = (int)checkCmd.ExecuteScalar();
+            if (count > 0)
+                throw new Exception("Такой логин уже существует.");
+
+            // Хешируем пароль
+            string hash = HashPassword(pass);
+
+            // Вставляем в БД: только Логин и Хеш в поле "Пароль"
+            string insertSql = "INSERT INTO Пользователи (Логин, Пароль) VALUES (@login, @hash)";
+            using var insertCmd = new OleDbCommand(insertSql, conn);
+            insertCmd.Parameters.AddWithValue("@login", login);
+            insertCmd.Parameters.AddWithValue("@hash", hash);
+
+            insertCmd.ExecuteNonQuery();
         }
 
+        /// <summary>
+        /// Получает пользователя по логину. Возвращает DataTable с колонками: Логин, Пароль
+        /// </summary>
         public static DataTable GetUserByLogin(string login)
         {
-            string sql = "SELECT * FROM Users WHERE Login = ?";
-            var param = new OleDbParameter("?", login);
-            return dataAccess.GetData(sql, new[] { param });
+            var result = new DataTable();
+            using var conn = new OleDbConnection(GetConnectionString());
+
+            string sql = "SELECT Логин, Пароль FROM Пользователи WHERE Логин = @login";
+            using var cmd = new OleDbCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@login", login);
+
+            conn.Open();
+            using var adapter = new OleDbDataAdapter(cmd);
+            adapter.Fill(result);
+
+            return result;
         }
 
-        public static void RegisterUser(string login, string password)
+        /// <summary>
+        /// Проверяет пароль: хеширует введённый и сравнивает с сохранённым хешем.
+        /// </summary>
+        public static bool VerifyPassword(string inputPassword, string storedHash)
         {
-            var (hash, salt) = HashPassword(password);
-            string sql = "INSERT INTO Users (Login, PasswordHash, Salt) VALUES (?, ?, ?)";
-            var paramsArr = new[]
+            try
             {
-                new OleDbParameter("?", login),
-                new OleDbParameter("?", hash),
-                new OleDbParameter("?", salt)
-            };
-            dataAccess.ExecuteNonQuery(sql, paramsArr);
-        }
-
-        // Метод для получения структуры таблицы (имен колонок) для динамической формы
-        public static DataTable GetTableSchema(string tableName)
-        {
-            // SELECT TOP 0 возвращает только структуру (колонки), не грузя данные. Это быстро.
-            // Аргумент: Лучше чем SELECT *, так как не тратит время на чтение миллионов строк.
-            string sql = $"SELECT TOP 0 * FROM [{tableName}]";
-            return dataAccess.GetData(sql);
+                string hash = HashPassword(inputPassword);
+                return hash == storedHash;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

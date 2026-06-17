@@ -8,8 +8,6 @@ namespace SummerPractice
         public LoginForm()
         {
             InitializeComponent();
-            this.Text = "Вход в систему";
-            this.StartPosition = FormStartPosition.CenterScreen;
         }
 
         private void btnLogin_Click(object sender, EventArgs e)
@@ -17,10 +15,15 @@ namespace SummerPractice
             string login = txtLogin.Text.Trim();
             string password = txtPassword.Text;
 
-            // Простая валидация длины (n символов, пусть будет 3)
+            if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(password))
+            {
+                MessageBox.Show("Заполните логин и пароль.", "Ошибка ввода");
+                return;
+            }
+
             if (password.Length < 3)
             {
-                MessageBox.Show("Пароль должен содержать не менее 3 символов.", "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Пароль должен содержать не менее 3 символов.", "Ошибка");
                 return;
             }
 
@@ -30,17 +33,16 @@ namespace SummerPractice
 
                 if (userTable.Rows.Count == 0)
                 {
-                    MessageBox.Show("Пользователь не найден. Если вы новый пользователь, зарегистрируйтесь.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Пользователь не найден. Зарегистрируйтесь.", "Ошибка входа", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                // Получаем данные из первой строки результата
-                string storedHash = userTable.Rows[0]["PasswordHash"].ToString();
-                string storedSalt = userTable.Rows[0]["Salt"].ToString();
+                // Читаем сохранённый хеш из поля "Пароль"
+                string storedHash = userTable.Rows[0]["Пароль"].ToString();
 
-                if (DatabaseManager.VerifyPassword(password, storedHash, storedSalt))
+                // Сравниваем введённый пароль с хешем через SHA256
+                if (DatabaseManager.VerifyPassword(password, storedHash))
                 {
-                    // Успешный вход
                     this.DialogResult = DialogResult.OK;
                     this.Close();
                 }
@@ -51,10 +53,14 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                // Сюда попадет ошибка драйвера (Microsoft ACE OLEDB)
-                MessageBox.Show($"Критическая ошибка подключения к БД:\n{ex.Message}\n\nУбедитесь, что файл CourseWork.accdb лежит в папке bin и установлен драйвер Access.", "Ошибка системы", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Application.Exit(); // Закрываем приложение, так как без БД работать нельзя
+                MessageBox.Show($"Ошибка подключения к БД:\n{ex.Message}", "Критическая ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+
+        private void LoginForm_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }

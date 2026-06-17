@@ -1,18 +1,20 @@
-using SummerPractice;
+using System;
+using System.Windows.Forms;
 
-namespace SummerPracticeWork
+namespace SummerPractice
 {
     internal static class Program
     {
-        /// <summary>
-        ///  The main entry point for the application.
-        /// </summary>
         [STAThread]
         static void Main()
         {
-            // To customize application configuration such as set high DPI settings or default font,
-            // see https://aka.ms/applicationconfiguration.
-            ApplicationConfiguration.Initialize();
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
+            // Включаем поддержку высокого DPI, чтобы текст не был мыльным
+            Application.SetHighDpiMode(HighDpiMode.SystemAware);
+
+            // Запускаем сразу MainForm
             Application.Run(new MainForm());
         }
     }

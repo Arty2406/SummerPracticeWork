@@ -8,8 +8,14 @@ namespace SummerPractice
         public RegisterForm()
         {
             InitializeComponent();
-            this.Text = "Регистрация";
-            this.StartPosition = FormStartPosition.CenterParent;
+        }
+
+        private void RegisterForm_Load(object sender, EventArgs e)
+        {
+            // фокусировка на поле с логином, звёздочки вместо символов при вводе
+            txtRegPass.PasswordChar = '*';
+            txtRegConfirm.PasswordChar = '*';
+            txtRegLogin.Focus();
         }
 
         private void btnRegister_Click(object sender, EventArgs e)
@@ -18,40 +24,66 @@ namespace SummerPractice
             string pass = txtRegPass.Text;
             string confirm = txtRegConfirm.Text;
 
-            if (string.IsNullOrEmpty(login) || string.IsNullOrEmpty(pass))
+            // проверки
+            if (string.IsNullOrWhiteSpace(login))
             {
-                MessageBox.Show("Заполните все поля.", "Ошибка");
+                MessageBox.Show("Введите логин.", "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                txtRegLogin.Focus();
                 return;
             }
 
-            if (pass.Length < 5) // n = 5 символов
+            if (string.IsNullOrWhiteSpace(pass))
             {
-                MessageBox.Show("Пароль должен быть не менее 5 символов.", "Ошибка длины");
+                MessageBox.Show("Введите пароль.", "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                txtRegPass.Focus();
+                return;
+            }
+
+            if (pass.Length < 6)
+            {
+                MessageBox.Show("Пароль должен быть не менее 5 символов.", "Ошибка длины", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                txtRegPass.Focus();
                 return;
             }
 
             if (pass != confirm)
             {
-                MessageBox.Show("Пароли не совпадают.", "Ошибка подтверждения");
+                MessageBox.Show("Пароли не совпадают. Проверьте ввод.", "Ошибка подтверждения", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                txtRegConfirm.Clear();
+                txtRegConfirm.Focus();
                 return;
             }
 
+            // запись пароля в БД
             try
             {
+                // хеширование пароля через SHA256 и его сохранение в поле "Пароль"
                 DatabaseManager.RegisterUser(login, pass);
-                MessageBox.Show("Регистрация успешна! Теперь войдите в систему.", "Успех");
+
+                MessageBox.Show($"Пользователь '{login}' успешно зарегистрирован!", "Успех", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                this.DialogResult = DialogResult.OK;
                 this.Close();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка регистрации: {ex.Message}", "Ошибка БД");
+                MessageBox.Show($"Ошибка регистрации: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void RegisterForm_Load(object sender, EventArgs e)
+        private void txtRegPass_TextChanged(object sender, EventArgs e)
         {
-            btnRegister.Text = "Зарегистрироваться"; // Исправляем название кнопки
-                                                     // Здесь можно добавить другие настройки при загрузке, если нужно
+
+        }
+
+        private void groupBoxReg_Enter(object sender, EventArgs e)
+        {
+
+        }
+
+        private void txtRegConfirm_TextChanged(object sender, EventArgs e)
+        {
+
         }
     }
 }

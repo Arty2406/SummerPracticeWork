@@ -11,10 +11,12 @@ namespace SummerPractice
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // Включаем поддержку высокого DPI, чтобы текст не был мыльным
+            // поддержка высокого DPI
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
-            // Запускаем сразу MainForm
+            // проверка на существование админа
+            DatabaseManager.EnsureAdminCreated();
+
             Application.Run(new MainForm());
         }
     }

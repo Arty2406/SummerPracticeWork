@@ -25,6 +25,7 @@ namespace SummerPractice
             string confirm = txtRegConfirm.Text;
 
             // проверки
+
             if (string.IsNullOrWhiteSpace(login))
             {
                 MessageBox.Show("Введите логин.", "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -41,7 +42,7 @@ namespace SummerPractice
 
             if (pass.Length < 6)
             {
-                MessageBox.Show("Пароль должен быть не менее 5 символов.", "Ошибка длины", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Пароль должен быть не менее 6 символов.", "Ошибка длины", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtRegPass.Focus();
                 return;
             }
@@ -54,13 +55,11 @@ namespace SummerPractice
                 return;
             }
 
-            // запись пароля в БД
             try
             {
-                // хеширование пароля через SHA256 и его сохранение в поле "Пароль"
-                DatabaseManager.RegisterUser(login, pass);
+                DatabaseManager.RegisterGuest(login, pass);
 
-                MessageBox.Show($"Пользователь '{login}' успешно зарегистрирован!", "Успех", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"Пользователь '{login}' успешно зарегистрирован!\nРоль: Гость.", "Успех", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 this.DialogResult = DialogResult.OK;
                 this.Close();

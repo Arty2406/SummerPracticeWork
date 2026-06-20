@@ -28,7 +28,7 @@ namespace SummerPractice
             btnCreateReport = new Button();
             btnSave = new Button();
             dataGridViewMain = new DataGridView();
-            btnAdd = new Button();
+            btnChange = new Button();
             groupBoxElemProject = new GroupBox();
             btnSearch = new Button();
             ((ISupportInitialize)dataGridViewMain).BeginInit();
@@ -38,7 +38,7 @@ namespace SummerPractice
             // btnExitToMain
             // 
             btnExitToMain.Anchor = AnchorStyles.Right;
-            btnExitToMain.Location = new Point(20, 395);
+            btnExitToMain.Location = new Point(20, 326);
             btnExitToMain.Name = "btnExitToMain";
             btnExitToMain.Size = new Size(187, 28);
             btnExitToMain.TabIndex = 1;
@@ -51,7 +51,7 @@ namespace SummerPractice
             comboBoxTables.Anchor = AnchorStyles.Right;
             comboBoxTables.DropDownStyle = ComboBoxStyle.DropDownList;
             comboBoxTables.FormattingEnabled = true;
-            comboBoxTables.Location = new Point(20, 157);
+            comboBoxTables.Location = new Point(20, 88);
             comboBoxTables.Name = "comboBoxTables";
             comboBoxTables.Size = new Size(187, 28);
             comboBoxTables.TabIndex = 2;
@@ -60,7 +60,7 @@ namespace SummerPractice
             // btnFilter
             // 
             btnFilter.Anchor = AnchorStyles.Right;
-            btnFilter.Location = new Point(20, 225);
+            btnFilter.Location = new Point(20, 156);
             btnFilter.Name = "btnFilter";
             btnFilter.Size = new Size(187, 28);
             btnFilter.TabIndex = 4;
@@ -71,7 +71,7 @@ namespace SummerPractice
             // btnSort
             // 
             btnSort.Anchor = AnchorStyles.Right;
-            btnSort.Location = new Point(20, 259);
+            btnSort.Location = new Point(20, 190);
             btnSort.Name = "btnSort";
             btnSort.Size = new Size(187, 28);
             btnSort.TabIndex = 5;
@@ -82,7 +82,7 @@ namespace SummerPractice
             // btnCreateReport
             // 
             btnCreateReport.Anchor = AnchorStyles.Right;
-            btnCreateReport.Location = new Point(20, 293);
+            btnCreateReport.Location = new Point(20, 224);
             btnCreateReport.Name = "btnCreateReport";
             btnCreateReport.Size = new Size(187, 28);
             btnCreateReport.TabIndex = 6;
@@ -93,7 +93,7 @@ namespace SummerPractice
             // btnSave
             // 
             btnSave.Anchor = AnchorStyles.Right;
-            btnSave.Location = new Point(20, 361);
+            btnSave.Location = new Point(20, 292);
             btnSave.Name = "btnSave";
             btnSave.Size = new Size(187, 28);
             btnSave.TabIndex = 8;
@@ -106,31 +106,31 @@ namespace SummerPractice
             dataGridViewMain.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             dataGridViewMain.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.ColumnHeader;
             dataGridViewMain.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
-            dataGridViewMain.BackgroundColor = SystemColors.Window;
+            dataGridViewMain.BackgroundColor = Color.LightSkyBlue;
             dataGridViewMain.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             dataGridViewMain.Location = new Point(20, 12);
             dataGridViewMain.Name = "dataGridViewMain";
             dataGridViewMain.RowHeadersWidth = 51;
-            dataGridViewMain.Size = new Size(636, 576);
+            dataGridViewMain.Size = new Size(636, 439);
             dataGridViewMain.TabIndex = 3;
             // 
-            // btnAdd
+            // btnChange
             // 
-            btnAdd.Anchor = AnchorStyles.Right;
-            btnAdd.Location = new Point(20, 327);
-            btnAdd.Name = "btnAdd";
-            btnAdd.Size = new Size(187, 28);
-            btnAdd.TabIndex = 9;
-            btnAdd.Text = "Добавить";
-            btnAdd.UseVisualStyleBackColor = true;
-            btnAdd.Click += btnAdd_Click;
+            btnChange.Anchor = AnchorStyles.Right;
+            btnChange.Location = new Point(20, 258);
+            btnChange.Name = "btnChange";
+            btnChange.Size = new Size(187, 28);
+            btnChange.TabIndex = 9;
+            btnChange.Text = "Изменить таблицу";
+            btnChange.UseVisualStyleBackColor = true;
+            btnChange.Click += btnChange_Click;
             // 
             // groupBoxElemProject
             // 
             groupBoxElemProject.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             groupBoxElemProject.Controls.Add(btnSearch);
             groupBoxElemProject.Controls.Add(comboBoxTables);
-            groupBoxElemProject.Controls.Add(btnAdd);
+            groupBoxElemProject.Controls.Add(btnChange);
             groupBoxElemProject.Controls.Add(btnExitToMain);
             groupBoxElemProject.Controls.Add(btnFilter);
             groupBoxElemProject.Controls.Add(btnSave);
@@ -138,15 +138,14 @@ namespace SummerPractice
             groupBoxElemProject.Controls.Add(btnCreateReport);
             groupBoxElemProject.Location = new Point(662, 12);
             groupBoxElemProject.Name = "groupBoxElemProject";
-            groupBoxElemProject.Size = new Size(226, 576);
+            groupBoxElemProject.Size = new Size(226, 439);
             groupBoxElemProject.TabIndex = 10;
             groupBoxElemProject.TabStop = false;
-            groupBoxElemProject.Enter += groupElemProject_Enter;
             // 
             // btnSearch
             // 
             btnSearch.Anchor = AnchorStyles.Right;
-            btnSearch.Location = new Point(20, 191);
+            btnSearch.Location = new Point(20, 122);
             btnSearch.Name = "btnSearch";
             btnSearch.Size = new Size(187, 28);
             btnSearch.TabIndex = 10;
@@ -179,7 +178,7 @@ namespace SummerPractice
         private Button btnCreateReport;
         private Button btnSave;
         private DataGridView dataGridViewMain;
-        private Button btnAdd;
+        private Button btnChange;
         private GroupBox groupBoxElemProject;
         private Button btnSearch;
     }

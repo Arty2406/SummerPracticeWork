@@ -19,21 +19,30 @@ namespace SummerPractice
 
         private void btnInput_Click(object? sender, EventArgs e)
         {
+            // ✅ При первом запуске создаём админа, если его ещё нет
+            try
+            {
+                DatabaseManager.EnsureAdminCreated();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка инициализации БД: {ex.Message}", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             using (var loginForm = new LoginForm())
             {
-                if (loginForm.ShowDialog() != DialogResult.OK) return; // Отменён вход — выходим
+                if (loginForm.ShowDialog() != DialogResult.OK) return;
             }
 
             // Вход успешен: скрываем MainForm
             this.Hide();
 
             var projectForm = new ProjectForm();
-
-            // Когда ProjectForm закроется — завершаем приложение (или показываем MainForm обратно)
             projectForm.FormClosed += (s, args) => Application.Exit();
             projectForm.Show();
         }
-
 
         private void btnRegistration_Click(object? sender, EventArgs e)
         {

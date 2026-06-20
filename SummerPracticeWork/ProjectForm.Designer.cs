@@ -113,6 +113,9 @@ namespace SummerPractice
             dataGridViewMain.RowHeadersWidth = 51;
             dataGridViewMain.Size = new Size(636, 439);
             dataGridViewMain.TabIndex = 3;
+            dataGridViewMain.CellValidating += DataGridViewMain_CellValidating;
+            dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
+            dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
             // 
             // btnChange
             // 

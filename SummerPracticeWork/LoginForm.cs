@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Data;
 using System.Windows.Forms;
 
 namespace SummerPractice
@@ -33,30 +34,35 @@ namespace SummerPractice
 
                 if (userTable.Rows.Count == 0)
                 {
-                    MessageBox.Show("Пользователь не найден. Зарегистрируйтесь.", "Ошибка входа", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Пользователь не найден. Зарегистрируйтесь.", "Ошибка входа",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                // Читаем сохранённый хеш из поля "Пароль"
-                string storedHash = userTable.Rows[0]["Пароль"].ToString();
+                DataRow row = userTable.Rows[0];
+                string storedHash = row["Пароль"].ToString();
+                string role = row["Роль"].ToString(); // ✅ читаем роль
 
-                // Сравниваем введённый пароль с хешем через SHA256
                 if (DatabaseManager.VerifyPassword(password, storedHash))
                 {
+                    // ✅ СОХРАНЯЕМ ДАННЫЕ ВОШЕДШЕГО ПОЛЬЗОВАТЕЛЯ
+                    CurrentUser.SetUser(login, role);
+
                     this.DialogResult = DialogResult.OK;
                     this.Close();
                 }
                 else
                 {
-                    MessageBox.Show("Неверный логин или пароль.", "Ошибка входа", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Неверный логин или пароль.", "Ошибка входа",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения к БД:\n{ex.Message}", "Критическая ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Ошибка подключения к БД:\n{ex.Message}", "Критическая ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
-
 
         private void LoginForm_Load(object sender, EventArgs e)
         {

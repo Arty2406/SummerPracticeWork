@@ -33,15 +33,11 @@ namespace SummerPractice
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Регистрирует обычного пользователя с ролью "Гость"
-        /// </summary>
         public static void RegisterGuest(string login, string pass)
         {
             using var conn = new OleDbConnection(GetConnectionString());
             conn.Open();
 
-            // Проверка на дубликат логина (используем ?, порядок важен)
             string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = ?";
             using var checkCmd = new OleDbCommand(checkSql, conn);
             checkCmd.Parameters.AddWithValue("?", login);
@@ -50,28 +46,22 @@ namespace SummerPractice
                 throw new Exception("Такой логин уже существует.");
 
             string hash = HashPassword(pass);
-
-            // INSERT с тремя полями: Логин, Пароль, Роль
             string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
             using var insertCmd = new OleDbCommand(insertSql, conn);
             insertCmd.Parameters.AddWithValue("?", login);
             insertCmd.Parameters.AddWithValue("?", hash);
-            insertCmd.Parameters.AddWithValue("?", "Гость"); // Жёстко задаём роль
+            insertCmd.Parameters.AddWithValue("?", "Гость");
 
             insertCmd.ExecuteNonQuery();
         }
 
-        /// <summary>
-        /// Создаёт админа с фиксированным логином/паролем. Вызывать только при старте, если админа нет.
-        /// </summary>
         public static void EnsureAdminCreated()
         {
             using var conn = new OleDbConnection(GetConnectionString());
             conn.Open();
 
-            string adminLogin = "admin";
+            string adminLogin = "AdminArty";
 
-            // Проверяем, есть ли уже админ
             string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = ? AND Роль = ?";
             using var checkCmd = new OleDbCommand(checkSql, conn);
             checkCmd.Parameters.AddWithValue("?", adminLogin);
@@ -80,7 +70,6 @@ namespace SummerPractice
 
             if (count == 0)
             {
-                // Создаём админа с паролем admin123
                 string hash = HashPassword("24062007");
                 string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
                 using var insertCmd = new OleDbCommand(insertSql, conn);
@@ -91,9 +80,6 @@ namespace SummerPractice
             }
         }
 
-        /// <summary>
-        /// Получает данные пользователя (включая Роль) по логину
-        /// </summary>
         public static DataTable GetUserByLogin(string login)
         {
             var result = new DataTable();

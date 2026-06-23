@@ -12,8 +12,6 @@ namespace SummerPractice.DataAccess
             ConnectionString = connectionString;
         }
 
-        // Универсальный метод для получения данных (SELECT)
-        // Аргумент: использование этого метода вместо прямого new OleDbDataAdapter везде снижает дублирование кода.
         public DataTable GetData(string sql, OleDbParameter[] parameters = null)
         {
             using var conn = new OleDbConnection(ConnectionString);
@@ -28,7 +26,6 @@ namespace SummerPractice.DataAccess
             return dt;
         }
 
-        // Универсальный метод для изменения данных (INSERT, UPDATE, DELETE)
         public int ExecuteNonQuery(string sql, OleDbParameter[] parameters = null)
         {
             using var conn = new OleDbConnection(ConnectionString);

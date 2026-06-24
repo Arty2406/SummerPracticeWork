@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- ИСПРАВЛЕНИЕ 1: Добавлен суффикс -windows -->
+		<TargetFramework>net8.0-windows</TargetFramework>
+
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+
+		<!-- ИСПРАВЛЕНИЕ 2: Разрешаем использование Windows Forms -->
+		<UseWindowsForms>true</UseWindowsForms>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<COMReference Include="{00020905-0000-0000-c000-000000000046}">
+			<WrapperTool>tlbimp</WrapperTool>
+			<VersionMinor>7</VersionMinor>
+			<VersionMajor>8</VersionMajor>
+			<Guid>00020905-0000-0000-c000-000000000046</Guid>
+		</COMReference>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" Version="6.0.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+		<PackageReference Include="xunit" Version="2.5.3" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SummerPracticeWork\SummerPracticeWork.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+	</ItemGroup>
+
+</Project>

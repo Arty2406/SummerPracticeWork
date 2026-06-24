@@ -88,10 +88,10 @@ namespace SummerPractice
                 wordTable.Borders.Enable = 1;
 
                 // Заголовки
-                for (int c = 0; c < colCount; c++)
+                for (int i = 0; i < colCount; i++)
                 {
-                    Word.Cell cell = wordTable.Cell(1, c + 1);
-                    cell.Range.Text = visibleCols[c].HeaderText;
+                    Word.Cell cell = wordTable.Cell(1, i + 1);
+                    cell.Range.Text = visibleCols[i].HeaderText;
                     cell.Range.Font.Bold = 1;
                     cell.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
                     cell.Shading.BackgroundPatternColor = Word.WdColor.wdColorGray15;
@@ -101,10 +101,10 @@ namespace SummerPractice
                 int currentRow = 2;
                 foreach (DataGridViewRow dgvRow in visibleRows)
                 {
-                    for (int c = 0; c < colCount; c++)
+                    for (int i = 0; i < colCount; i++)
                     {
-                        Word.Cell cell = wordTable.Cell(currentRow, c + 1);
-                        object cellValue = dgvRow.Cells[visibleCols[c].Index].Value;
+                        Word.Cell cell = wordTable.Cell(currentRow, i + 1);
+                        object cellValue = dgvRow.Cells[visibleCols[i].Index].Value;
 
                         // Форматируем даты без времени
                         if (cellValue is DateTime dt)

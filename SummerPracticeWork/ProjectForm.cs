@@ -43,7 +43,8 @@ namespace SummerPractice
 
                 if (tableNames.Count == 0)
                 {
-                    MessageBox.Show("В базе данных нет доступных вам таблиц.", "Внимание",
+                    MessageBox.Show(
+                        "В базе данных нет доступных вам таблиц.", "Внимание",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
@@ -72,7 +73,7 @@ namespace SummerPractice
         {
             if (comboBoxTables.SelectedItem == null) return;
 
-            // Проверка несохранённых изменений
+            // проверка несохранённых изменений
             if (dataManager.HasUnsavedChanges)
             {
                 var result = MessageBox.Show(
@@ -96,7 +97,7 @@ namespace SummerPractice
                 dataManager.SelectTable(tableName);
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
-                // Форматирование столбцов с датами
+                // форматирование столбцов с датами
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
                 {
                     if (col.ValueType == typeof(DateTime))
@@ -114,6 +115,7 @@ namespace SummerPractice
             }
         }
 
+        // кнопка выхода в главное меню
         private void btnExitToMain_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(
@@ -123,10 +125,11 @@ namespace SummerPractice
             if (result == DialogResult.Yes)
             {
                 CurrentUser.Logout();
-                this.Close();
+                this.Hide();
             }
         }
 
+        // кнопка для изменения таблицы (добавление/удаление данных)
         private void btnChange_Click(object sender, EventArgs e)
         {
             if (!IsAdmin())
@@ -143,7 +146,7 @@ namespace SummerPractice
                 return;
             }
 
-            // Сброс всех состояний перед редактированием
+            // сброс таблицы/возврат в изначальное состояние
             ResetAllViewStates();
             dataManager.ResetAll();
 
@@ -168,6 +171,7 @@ namespace SummerPractice
                 "Режим редактирования", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        // вспомогательная функция для btnChange_Click
         private void ExitEditMode()
         {
             if (dataManager.HasUnsavedChanges)
@@ -218,6 +222,7 @@ namespace SummerPractice
                 var txtFrom = filterDialog.Controls.Find("txtFrom", true)[0] as TextBox;
                 var txtTo = filterDialog.Controls.Find("txtTo", true)[0] as TextBox;
 
+                // проверки
                 if (checkedListBox.CheckedItems.Count == 0)
                 {
                     MessageBox.Show("Выберите хотя бы один столбец для отображения.", "Внимание",
@@ -317,11 +322,11 @@ namespace SummerPractice
             {
                 dataGridViewMain.EndEdit();
 
-                // Если DataSource — DataView, возвращаем к originalTable
+                // если DataSource — DataView, возвращается к originalTable
                 if (dataGridViewMain.DataSource is DataView)
                     dataGridViewMain.DataSource = dataManager.OriginalTable;
 
-                // Показываем все строки и столбцы
+                // показываются все строки и столбцы
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
                     try { col.Visible = true; } catch { }
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
@@ -381,6 +386,7 @@ namespace SummerPractice
 
         private void btnSort_Click(object sender, EventArgs e)
         {
+            // проверки
             if (dataGridViewMain.DataSource == null)
             {
                 MessageBox.Show("Сначала выберите таблицу.", "Внимание",
@@ -772,29 +778,37 @@ namespace SummerPractice
 
         private void DataGridViewMain_UserDeletingRow(object sender, DataGridViewRowCancelEventArgs e)
         {
-            if (!isAdminMode) return;
-
-            DataRow row = GetCurrentDataRow(e.Row);
-            if (row == null) return;
-
-            var violations = dataManager.CheckForeignKeyViolations(row);
-
-            if (violations.Count > 0)
+            try
             {
-                e.Cancel = true;
-                MessageBox.Show(
-                    "Нельзя удалить строку — существуют связанные данные:\n\n" + string.Join("\n", violations) +
-                    "\n\nСначала удалите связанные записи из дочерних таблиц.",
-                    "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                if (!isAdminMode) return;
+
+                DataRow row = GetCurrentDataRow(e.Row);
+                if (row == null || row.RowState == DataRowState.Deleted) return;
+
+                var violations = dataManager.CheckForeignKeyViolations(row);
+
+                if (violations.Count > 0)
+                {
+                    e.Cancel = true;
+                    MessageBox.Show(
+                        "Нельзя удалить строку — существуют связанные данные:\n\n" + string.Join("\n", violations) +
+                        "\n\nСначала удалите связанные записи из дочерних таблиц.",
+                        "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                var result = MessageBox.Show(
+                    "Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
+                    "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (result == DialogResult.No)
+                    e.Cancel = true;
             }
-
-            var result = MessageBox.Show(
-                "Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
-                "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-            if (result == DialogResult.No)
-                e.Cancel = true;
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при удалении строки:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                e.Cancel = true; // отменяем удаление, чтобы не потерять данные
+            }
         }
 
         private void DataGridViewMain_KeyDown(object sender, KeyEventArgs e)

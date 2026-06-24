@@ -1,9 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36511.14 d17.14
+VisualStudioVersion = 17.14.36511.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SummerPracticeWork", "SummerPracticeWork\SummerPracticeWork.csproj", "{11723847-A75F-4376-83C8-FB482984AFDE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestProjectForSummerPractice", "TestProjectForSummerPractice\TestProjectForSummerPractice.csproj", "{ABB74227-31BA-4961-AB05-E1E2149FA998}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +17,10 @@ Global
 		{11723847-A75F-4376-83C8-FB482984AFDE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{11723847-A75F-4376-83C8-FB482984AFDE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{11723847-A75F-4376-83C8-FB482984AFDE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ABB74227-31BA-4961-AB05-E1E2149FA998}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ABB74227-31BA-4961-AB05-E1E2149FA998}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ABB74227-31BA-4961-AB05-E1E2149FA998}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ABB74227-31BA-4961-AB05-E1E2149FA998}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

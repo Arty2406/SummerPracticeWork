@@ -2,16 +2,10 @@
 
 namespace SummerPractice
 {
-    partial class LoginForm : Form
+    partial class Autentification : Form
     {
-        /// <summary>
-        /// Required designer variable.
-        /// </summary>
         private System.ComponentModel.IContainer components = null;
 
-        /// <summary>
-        /// Clean up any resources being used.
-        /// </summary>
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
@@ -24,15 +18,11 @@ namespace SummerPractice
 
         #region Windows Form Designer generated code
 
-        /// <summary>
-        /// Required method for Designer support - do not modify
-        /// the contents of this method with the code editor.
-        /// </summary>
         private void InitializeComponent()
         {
             txtLogin = new TextBox();
             txtPassword = new TextBox();
-            btnLogin = new Button();
+            btnAutentification = new Button();
             labelLogin = new Label();
             labelPassword = new Label();
             labelHello = new Label();
@@ -54,16 +44,16 @@ namespace SummerPractice
             txtPassword.Size = new Size(225, 27);
             txtPassword.TabIndex = 1;
             // 
-            // btnLogin
+            // btnAutentification
             // 
-            btnLogin.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            btnLogin.Location = new Point(245, 248);
-            btnLogin.Name = "btnLogin";
-            btnLogin.Size = new Size(296, 29);
-            btnLogin.TabIndex = 2;
-            btnLogin.Text = "Войти";
-            btnLogin.UseVisualStyleBackColor = true;
-            btnLogin.Click += btnLogin_Click;
+            btnAutentification.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            btnAutentification.Location = new Point(245, 248);
+            btnAutentification.Name = "btnAutentification";
+            btnAutentification.Size = new Size(296, 29);
+            btnAutentification.TabIndex = 2;
+            btnAutentification.Text = "Войти";
+            btnAutentification.UseVisualStyleBackColor = true;
+            btnAutentification.Click += btnAutentification_Click;
             // 
             // labelLogin
             // 
@@ -97,7 +87,7 @@ namespace SummerPractice
             labelHello.Text = "Добро пожаловать, пользователь!\r\nВведите логин и пароль для входа в систему\r\n";
             labelHello.TextAlign = ContentAlignment.MiddleCenter;
             // 
-            // LoginForm
+            // Autentification
             // 
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
@@ -106,10 +96,10 @@ namespace SummerPractice
             Controls.Add(labelHello);
             Controls.Add(labelPassword);
             Controls.Add(labelLogin);
-            Controls.Add(btnLogin);
+            Controls.Add(btnAutentification);
             Controls.Add(txtPassword);
             Controls.Add(txtLogin);
-            Name = "LoginForm";
+            Name = "Autentification";
             Text = "Вход в систему";
             Load += LoginForm_Load;
             ResumeLayout(false);
@@ -120,7 +110,7 @@ namespace SummerPractice
 
         private TextBox txtLogin;
         private TextBox txtPassword;
-        private Button btnLogin;
+        private Button btnAutentification;
         private Label labelLogin;
         private Label labelPassword;
         private Label labelHello;

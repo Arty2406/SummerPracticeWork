@@ -17,9 +17,10 @@ namespace SummerPractice
             InitializeComponent();
         }
 
+        // кнопка аутентификации
         private void btnInput_Click(object? sender, EventArgs e)
         {
-            // ✅ При первом запуске создаём админа, если его ещё нет
+            // при первом запуске будет создаваться админ, если его нет
             try
             {
                 DatabaseManager.EnsureAdminCreated();
@@ -31,19 +32,17 @@ namespace SummerPractice
                 return;
             }
 
-            using (var loginForm = new LoginForm())
+            using (var loginForm = new Autentification())
             {
                 if (loginForm.ShowDialog() != DialogResult.OK) return;
             }
-
-            // Вход успешен: скрываем MainForm
-            this.Hide();
 
             var projectForm = new ProjectForm();
             projectForm.FormClosed += (s, args) => Application.Exit();
             projectForm.Show();
         }
 
+        // кнопка регистрации
         private void btnRegistration_Click(object? sender, EventArgs e)
         {
             using (var regForm = new RegisterForm())
@@ -54,12 +53,13 @@ namespace SummerPractice
                 {
                     MessageBox.Show("Регистрация успешна! Теперь войдите.", "Готово", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-                    // Опционально: сразу открыть форму входа после успешной регистрации
+                    // после регистрации пользователя сразу перекидывает на форму аутентификации
                     btnInput_Click(sender, e);
                 }
             }
         }
 
+        // кнопка выхода из приложения
         private void btnOutput_Click(object? sender, EventArgs e)
         {
             var result = MessageBox.Show(

@@ -4,18 +4,19 @@ using System.Windows.Forms;
 
 namespace SummerPractice
 {
-    public partial class LoginForm : Form
+    public partial class Autentification : Form
     {
-        public LoginForm()
+        public Autentification()
         {
             InitializeComponent();
         }
 
-        private void btnLogin_Click(object sender, EventArgs e)
+        private void btnAutentification_Click(object sender, EventArgs e)
         {
             string login = txtLogin.Text.Trim();
             string password = txtPassword.Text;
 
+            // проверки
             if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(password))
             {
                 MessageBox.Show("Заполните логин и пароль.", "Ошибка ввода");
@@ -41,11 +42,12 @@ namespace SummerPractice
 
                 DataRow row = userTable.Rows[0];
                 string storedHash = row["Пароль"].ToString();
-                string role = row["Роль"].ToString(); // ✅ читаем роль
+                // чтение роли
+                string role = row["Роль"].ToString();
 
                 if (DatabaseManager.VerifyPassword(password, storedHash))
                 {
-                    // ✅ СОХРАНЯЕМ ДАННЫЕ ВОШЕДШЕГО ПОЛЬЗОВАТЕЛЯ
+                    // данные о вошедшем пользователе сохраняются
                     CurrentUser.SetUser(login, role);
 
                     this.DialogResult = DialogResult.OK;

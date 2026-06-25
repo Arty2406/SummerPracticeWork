@@ -638,7 +638,7 @@ namespace SummerPractice
         #endregion
 
         #region Поиск
-        
+
         private void btnSearch_Click(object sender, EventArgs e)
         {
             if (dataManager.OriginalTable == null)
@@ -655,7 +655,9 @@ namespace SummerPractice
             if (searchDialog.ShowDialog() == DialogResult.OK)
             {
                 var txtSearch = searchDialog.Controls.Find("txtSearch", true)[0] as TextBox;
+                var cmbColumn = searchDialog.Controls.Find("cmbColumn", true)[0] as ComboBox;
                 string searchText = txtSearch.Text.Trim();
+                string columnName = cmbColumn.SelectedItem.ToString();
 
                 if (string.IsNullOrWhiteSpace(searchText))
                 {
@@ -666,15 +668,12 @@ namespace SummerPractice
 
                 try
                 {
-                    var visibleColumnNames = dataGridViewMain.Columns.Cast<DataGridViewColumn>()
-                        .Where(c => c.Visible)
-                        .Select(c => c.Name);
-
-                    DataView dv = dataManager.PerformSearch(searchText, visibleColumnNames);
+                    // Передаем имя столбца в метод
+                    DataView dv = dataManager.PerformSearch(searchText, columnName);
 
                     if (dv == null)
                     {
-                        MessageBox.Show("Нет подходящих столбцов для поиска.", "Внимание",
+                        MessageBox.Show("Поиск не дал результатов или выбранный столбец не подходит для поиска.", "Внимание",
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
@@ -694,10 +693,11 @@ namespace SummerPractice
 
         private Form CreateSearchDialog()
         {
+            // Увеличили размер формы для размещения ComboBox
             var dialog = new Form
             {
                 Text = "Поиск по таблице",
-                Size = new System.Drawing.Size(400, 160),
+                Size = new System.Drawing.Size(400, 230),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -706,12 +706,26 @@ namespace SummerPractice
 
             var lblSearch = new Label { Text = "Введите текст или число:", Location = new System.Drawing.Point(15, 15), AutoSize = true };
             var txtSearch = new TextBox { Name = "txtSearch", Location = new System.Drawing.Point(15, 40), Width = 350 };
-            var btnOk = new Button { Text = "Найти", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(60, 80), Width = 90, Height = 30 };
-            var btnReset = new Button { Text = "Сбросить поиск", Location = new System.Drawing.Point(160, 80), Width = 110, Height = 30 };
-            btnReset.Click += (s, ev) => { ResetSearch(); dialog.Close(); };
-            var btnCancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(280, 80), Width = 90, Height = 30 };
 
-            dialog.Controls.AddRange(new Control[] { lblSearch, txtSearch, btnOk, btnReset, btnCancel });
+            // Новые элементы для выбора столбца
+            var lblCol = new Label { Text = "Искать в:", Location = new System.Drawing.Point(15, 75), AutoSize = true };
+            var cmbColumn = new ComboBox { Name = "cmbColumn", Location = new System.Drawing.Point(15, 95), Width = 350, DropDownStyle = ComboBoxStyle.DropDownList };
+
+            // Заполняем ComboBox
+            cmbColumn.Items.Add("Все столбцы");
+            foreach (DataGridViewColumn col in dataGridViewMain.Columns)
+            {
+                if (col.Visible) cmbColumn.Items.Add(col.Name);
+            }
+            cmbColumn.SelectedIndex = 0;
+
+            // Смещаем кнопки вниз
+            var btnOk = new Button { Text = "Найти", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(60, 140), Width = 90, Height = 30 };
+            var btnReset = new Button { Text = "Сбросить", Location = new System.Drawing.Point(160, 140), Width = 110, Height = 30 };
+            btnReset.Click += (s, ev) => { ResetSearch(); dialog.Close(); };
+            var btnCancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(280, 140), Width = 90, Height = 30 };
+
+            dialog.Controls.AddRange(new Control[] { lblSearch, txtSearch, lblCol, cmbColumn, btnOk, btnReset, btnCancel });
             dialog.AcceptButton = btnOk;
             dialog.CancelButton = btnCancel;
 

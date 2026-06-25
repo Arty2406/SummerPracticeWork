@@ -122,12 +122,10 @@ namespace SummerPractice
             return dv;
         }
 
-        /// <summary>
-        /// Выполняет поиск по всем видимым столбцам. Возвращает DataView с отфильтрованными строками.
-        /// </summary>
         /// <param name="searchText">Текст для поиска.</param>
         /// <param name="visibleColumnNames">Список имён видимых столбцов (поиск только по ним).</param>
-        public DataView PerformSearch(string searchText, IEnumerable<string> visibleColumnNames)
+        // В классе ProjectDataManager
+        public DataView PerformSearch(string searchText, string columnName)
         {
             if (originalTable == null)
                 throw new InvalidOperationException("Таблица не выбрана.");
@@ -137,13 +135,21 @@ namespace SummerPractice
             bool isNumber = decimal.TryParse(searchText, out decimal numValue);
             bool isDate = DateTime.TryParse(searchText, out DateTime dateValue);
 
-            var visibleSet = new HashSet<string>(visibleColumnNames);
-
-            foreach (DataColumn col in originalTable.Columns)
+            // Определяем список столбцов для поиска
+            IEnumerable<DataColumn> colsToSearch;
+            if (columnName == "Все столбцы")
             {
-                if (!visibleSet.Contains(col.ColumnName))
-                    continue;
+                colsToSearch = originalTable.Columns.Cast<DataColumn>();
+            }
+            else
+            {
+                // Ищем только по выбранному столбцу
+                colsToSearch = originalTable.Columns.Cast<DataColumn>()
+                    .Where(c => c.ColumnName == columnName);
+            }
 
+            foreach (DataColumn col in colsToSearch)
+            {
                 if (col.DataType == typeof(string))
                 {
                     conditions.Add($"[{col.ColumnName}] LIKE '*{escapedText}*'");

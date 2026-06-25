@@ -33,7 +33,7 @@ namespace SummerPractice
 
             Word.Application wordApp = null;
             Word.Document doc = null;
-            Word.Table wordTable = null;  // <-- Объявляем здесь, чтобы было видно в finally
+            Word.Table wordTable = null;
             bool wordVisible = false;
 
             try
@@ -78,15 +78,17 @@ namespace SummerPractice
 
                 if (rowCount == 0 || colCount == 0)
                 {
-                    // Здесь можно сразу вернуть результат — освобождение сделаем в finally
                     return new ReportResult { Success = false, ErrorMessage = "Таблица пуста. Нечего включать в отчёт." };
                 }
 
-                // Создаём таблицу в Word
-                wordTable = doc.Tables.Add(selection.Range, rowCount + 1, colCount);
+                Word.Range tableRange = doc.Content;
+                tableRange.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
+
+                // создание таблицы в Word
+                wordTable = doc.Tables.Add(tableRange, rowCount + 1, colCount);
                 wordTable.Borders.Enable = 1;
 
-                // Заголовки
+                // заголовки
                 for (int i = 0; i < colCount; i++)
                 {
                     Word.Cell cell = wordTable.Cell(1, i + 1);
@@ -96,24 +98,32 @@ namespace SummerPractice
                     cell.Shading.BackgroundPatternColor = Word.WdColor.wdColorGray15;
                 }
 
-                // Данные
+                // данные
                 int currentRow = 2;
                 foreach (DataGridViewRow dgvRow in visibleRows)
                 {
                     for (int i = 0; i < colCount; i++)
                     {
                         Word.Cell cell = wordTable.Cell(currentRow, i + 1);
-                        object cellValue = dgvRow.Cells[visibleCols[i].Index].Value;
+                        object cellValue = dgvRow.Cells[visibleCols[i].Name].Value;
 
                         if (cellValue is DateTime dt)
                             cell.Range.Text = dt.ToString("dd.MM.yyyy");
+                        else if (cellValue != null && cellValue != DBNull.Value)
+                            cell.Range.Text = cellValue.ToString();
                         else
-                            cell.Range.Text = cellValue?.ToString() ?? "";
+                            cell.Range.Text = "";
                     }
                     currentRow++;
                 }
 
                 wordTable.AutoFitBehavior(Word.WdAutoFitBehavior.wdAutoFitWindow);
+                
+                if (File.Exists(fullPath))
+                {
+                    try { File.Delete(fullPath); } catch { }
+                }
+
                 doc.SaveAs2(fullPath, Word.WdSaveFormat.wdFormatXMLDocument);
 
                 wordApp.Visible = true;
@@ -137,43 +147,37 @@ namespace SummerPractice
             }
             finally
             {
-                // Освобождаем в строгом порядке: ячейки/таблица → документ → приложение
-                try
+                if (wordVisible)
                 {
-                    if (wordTable != null)
-                    {
-                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordTable);
-                        wordTable = null;
-                    }
+                    wordTable = null;
+                    doc = null;
+                    wordApp = null;
                 }
-                catch { }
-
-                try
+                else
                 {
-                    if (doc != null)
+                    try
                     {
-                        doc.Close(false);
-                        System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
-                        doc = null;
+                        if (doc != null)
+                        {
+                            doc.Close(Word.WdSaveOptions.wdDoNotSaveChanges);
+                            System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
+                            doc = null;
+                        }
                     }
-                }
-                catch { }
+                    catch { }
 
-                try
-                {
-                    if (wordApp != null)
+                    try
                     {
-                        // Если Word уже был видимым (пользователь сам открыл), не нужно принудительно закрывать
-                        if (!wordVisible)
-                            wordApp.Quit();
-
-                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
-                        wordApp = null;
+                        if (wordApp != null)
+                        {
+                            wordApp.Quit(Word.WdSaveOptions.wdDoNotSaveChanges);
+                            System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
+                            wordApp = null;
+                        }
                     }
+                    catch { }
                 }
-                catch { }
             }
         }
-
+        }
     }
-}

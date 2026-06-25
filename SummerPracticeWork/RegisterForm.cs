@@ -69,20 +69,5 @@ namespace SummerPractice
                 MessageBox.Show($"Ошибка регистрации: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
-
-        private void txtRegPass_TextChanged(object sender, EventArgs e)
-        {
-
-        }
-
-        private void groupBoxReg_Enter(object sender, EventArgs e)
-        {
-
-        }
-
-        private void txtRegConfirm_TextChanged(object sender, EventArgs e)
-        {
-
-        }
     }
 }

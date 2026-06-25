@@ -61,23 +61,40 @@ namespace SummerPractice
             conn.Open();
 
             string adminLogin = "AdminArty";
-
-            string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = ? AND Роль = ?";
-            using var checkCmd = new OleDbCommand(checkSql, conn);
+            string checkUserSql = "SELECT Роль FROM Пользователи WHERE Логин = ?";
+            using var checkCmd = new OleDbCommand(checkUserSql, conn);
             checkCmd.Parameters.AddWithValue("?", adminLogin);
-            checkCmd.Parameters.AddWithValue("?", "Администратор");
-            int count = (int)checkCmd.ExecuteScalar();
 
-            if (count == 0)
+            var reader = checkCmd.ExecuteReader();
+            if (!reader.Read())
             {
-                string hash = HashPassword("24062007");
-                string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
-                using var insertCmd = new OleDbCommand(insertSql, conn);
-                insertCmd.Parameters.AddWithValue("?", adminLogin);
-                insertCmd.Parameters.AddWithValue("?", hash);
-                insertCmd.Parameters.AddWithValue("?", "Администратор");
-                insertCmd.ExecuteNonQuery();
+                reader.Close();
+                CreateAdminUser(conn, adminLogin);
+                return;
             }
+
+            string currentRole = reader.GetString(reader.GetOrdinal("Роль"));
+            reader.Close();
+
+            if (currentRole != "Администратор")
+            {
+                string updateSql = "UPDATE Пользователи SET Роль = ? WHERE Логин = ?";
+                using var updateCmd = new OleDbCommand(updateSql, conn);
+                updateCmd.Parameters.AddWithValue("?", "Администратор");
+                updateCmd.Parameters.AddWithValue("?", adminLogin);
+                updateCmd.ExecuteNonQuery();
+            }
+        }
+
+        private static void CreateAdminUser(OleDbConnection conn, string adminLogin)
+        {
+            string hash = HashPassword("24062007");
+            string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
+            using var insertCmd = new OleDbCommand(insertSql, conn);
+            insertCmd.Parameters.AddWithValue("?", adminLogin);
+            insertCmd.Parameters.AddWithValue("?", hash);
+            insertCmd.Parameters.AddWithValue("?", "Администратор");
+            insertCmd.ExecuteNonQuery();
         }
 
         public static DataTable GetUserByLogin(string login)

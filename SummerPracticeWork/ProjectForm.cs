@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Data.OleDb;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -69,9 +70,39 @@ namespace SummerPractice
             return CurrentUser.IsLoggedIn && CurrentUser.IsAdmin;
         }
 
+        // =====================================================================
+        // ИСПРАВЛЕНИЕ 1: Безопасное завер редактирования перед любыми операциями
+        // =====================================================================
+        private void SafeEndEdit()
+        {
+            try
+            {
+                if (dataGridViewMain.IsCurrentCellInEditMode)
+                {
+                    dataGridViewMain.EndEdit();
+                }
+                // Дополнительно: завершаем редактирование на уровне BindingContext
+                if (dataGridViewMain.DataSource != null)
+                {
+                    dataGridViewMain.BindingContext[dataGridViewMain.DataSource].EndCurrentEdit();
+                }
+            }
+            catch
+            {
+                // Игнорируем ошибки EndEdit — они не критичны
+            }
+        }
+
+        // =====================================================================
+        // ИСПРАВЛЕНИЕ 2: Полностью переписанный обработчик переключения таблиц
+        // =====================================================================
         private void ComboBoxTables_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (comboBoxTables.SelectedItem == null) return;
+            if (comboBoxTables.SelectedItem.ToString() == dataManager.CurrentTableName) return; // Та же таблица
+
+            // ИСПРАВЛЕНИЕ: Завершаем редактирование ПЕРЕД проверкой изменений
+            SafeEndEdit();
 
             // проверка несохранённых изменений
             if (dataManager.HasUnsavedChanges)
@@ -82,11 +113,23 @@ namespace SummerPractice
 
                 if (result == DialogResult.Yes)
                 {
-                    if (!TrySaveChanges()) return;
+                    if (!TrySaveChanges())
+                    {
+                        // Если сохранение не удалось — отменяем переключение
+                        return;
+                    }
                 }
                 else if (result == DialogResult.Cancel)
                 {
                     return;
+                }
+                else // DialogResult.No — откатываем изменения
+                {
+                    try
+                    {
+                        dataManager.OriginalTable?.RejectChanges();
+                    }
+                    catch { }
                 }
             }
 
@@ -94,7 +137,18 @@ namespace SummerPractice
 
             try
             {
+                // ИСПРАВЛЕНИЕ: Если были в режиме редактирования — выходим из него
+                if (isAdminMode)
+                {
+                    ExitEditModeSilently(); // Тихий выход без MessageBox
+                }
+
                 dataManager.SelectTable(tableName);
+
+                // ИСПРАВЛЕНИЕ: Полностью сбрасываем DataSource перед установкой нового
+                dataGridViewMain.DataSource = null;
+                dataGridViewMain.Refresh();
+
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
                 // форматирование столбцов с датами
@@ -115,6 +169,27 @@ namespace SummerPractice
             }
         }
 
+        // ИСПРАВЛЕНИЕ 3: Тихий выход из режима редактирования (без MessageBox)
+        private void ExitEditModeSilently()
+        {
+            SafeEndEdit();
+
+            // Откатываем несохранённые изменения, если они есть
+            if (dataManager.HasUnsavedChanges)
+            {
+                try { dataManager.OriginalTable?.RejectChanges(); } catch { }
+            }
+
+            isAdminMode = false;
+            dataGridViewMain.ReadOnly = true;
+            dataGridViewMain.AllowUserToAddRows = false;
+            dataGridViewMain.AllowUserToDeleteRows = false;
+
+            btnChange.Text = "Изменить";
+            btnChange.BackColor = System.Drawing.SystemColors.Control;
+            btnChange.ForeColor = System.Drawing.SystemColors.ControlText;
+        }
+
         // кнопка выхода в главное меню
         private void btnExitToMain_Click(object sender, EventArgs e)
         {
@@ -129,7 +204,7 @@ namespace SummerPractice
             }
         }
 
-        // кнопка для изменения таблицы (добавление/удаление данных)
+        // кнопка для изменения таблицы
         private void btnChange_Click(object sender, EventArgs e)
         {
             if (!IsAdmin())
@@ -145,6 +220,9 @@ namespace SummerPractice
                 ExitEditMode();
                 return;
             }
+
+            // ИСПРАВЛЕНИЕ: Завершаем редактирование перед входом в режим
+            SafeEndEdit();
 
             // сброс таблицы/возврат в изначальное состояние
             ResetAllViewStates();
@@ -174,6 +252,8 @@ namespace SummerPractice
         // вспомогательная функция для btnChange_Click
         private void ExitEditMode()
         {
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ: Завершаем редактирование
+
             if (dataManager.HasUnsavedChanges)
             {
                 var result = MessageBox.Show(
@@ -187,6 +267,11 @@ namespace SummerPractice
                 else if (result == DialogResult.Cancel)
                 {
                     return;
+                }
+                else
+                {
+                    // ИСПРАВЛЕНИЕ: Явно откатываем изменения при выборе "Нет"
+                    try { dataManager.OriginalTable?.RejectChanges(); } catch { }
                 }
             }
 
@@ -214,6 +299,8 @@ namespace SummerPractice
                 return;
             }
 
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ
+
             using var filterDialog = CreateFilterDialog();
 
             if (filterDialog.ShowDialog() == DialogResult.OK)
@@ -222,7 +309,6 @@ namespace SummerPractice
                 var txtFrom = filterDialog.Controls.Find("txtFrom", true)[0] as TextBox;
                 var txtTo = filterDialog.Controls.Find("txtTo", true)[0] as TextBox;
 
-                // проверки
                 if (checkedListBox.CheckedItems.Count == 0)
                 {
                     MessageBox.Show("Выберите хотя бы один столбец для отображения.", "Внимание",
@@ -320,13 +406,11 @@ namespace SummerPractice
         {
             try
             {
-                dataGridViewMain.EndEdit();
+                SafeEndEdit(); // ИСПРАВЛЕНИЕ
 
-                // если DataSource — DataView, возвращается к originalTable
                 if (dataGridViewMain.DataSource is DataView)
                     dataGridViewMain.DataSource = dataManager.OriginalTable;
 
-                // показываются все строки и столбцы
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
                     try { col.Visible = true; } catch { }
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
@@ -386,7 +470,6 @@ namespace SummerPractice
 
         private void btnSort_Click(object sender, EventArgs e)
         {
-            // проверки
             if (dataGridViewMain.DataSource == null)
             {
                 MessageBox.Show("Сначала выберите таблицу.", "Внимание",
@@ -400,6 +483,8 @@ namespace SummerPractice
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ
 
             using var sortDialog = CreateSortDialog();
 
@@ -471,7 +556,6 @@ namespace SummerPractice
                 ForeColor = System.Drawing.Color.DarkBlue
             };
 
-            // Только видимые столбцы
             foreach (DataGridViewColumn dgvCol in dataGridViewMain.Columns)
                 if (dgvCol.Visible) cmbColumn.Items.Add(dgvCol.Name);
             if (cmbColumn.Items.Count > 0) cmbColumn.SelectedIndex = 0;
@@ -506,7 +590,8 @@ namespace SummerPractice
                 if (dataManager.OriginalTable.Columns.Contains(colName))
                 {
                     DataColumn col = dataManager.OriginalTable.Columns[colName];
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(col.DataType)}";
+                    Type actualType = GetActualColumnType(col);
+                    lblType.Text = $"Тип данных: {GetDataTypeDescription(actualType)}";
                 }
             };
 
@@ -516,7 +601,8 @@ namespace SummerPractice
                 if (dataManager.OriginalTable.Columns.Contains(colName))
                 {
                     DataColumn col = dataManager.OriginalTable.Columns[colName];
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(col.DataType)}";
+                    Type actualType = GetActualColumnType(col);
+                    lblType.Text = $"Тип данных: {GetDataTypeDescription(actualType)}";
                 }
             }
 
@@ -550,6 +636,8 @@ namespace SummerPractice
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ
 
             using var searchDialog = CreateSearchDialog();
 
@@ -642,6 +730,8 @@ namespace SummerPractice
         {
             try
             {
+                SafeEndEdit(); // ИСПРАВЛЕНИЕ
+
                 if (dataGridViewMain.DataSource is DataView)
                     dataGridViewMain.DataSource = dataManager.OriginalTable;
 
@@ -675,7 +765,7 @@ namespace SummerPractice
 
         private bool TrySaveChanges()
         {
-            try { dataGridViewMain.EndEdit(); } catch { }
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ: Более безопасный EndEdit
 
             var result = dataManager.TrySaveChanges();
 
@@ -705,6 +795,8 @@ namespace SummerPractice
                     "Внимание", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            SafeEndEdit(); // ИСПРАВЛЕНИЕ
 
             string userName = CurrentUser.IsLoggedIn ? CurrentUser.Login : "Неизвестно";
             string tableName = comboBoxTables.SelectedItem?.ToString() ?? "Таблица";
@@ -807,7 +899,7 @@ namespace SummerPractice
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка при удалении строки:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                e.Cancel = true; // отменяем удаление, чтобы не потерять данные
+                e.Cancel = true;
             }
         }
 
@@ -859,6 +951,53 @@ namespace SummerPractice
         #endregion
 
         #region Вспомогательные методы
+
+        private Type GetActualColumnType(DataColumn col)
+        {
+            if (dataManager.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
+                return col.DataType;
+
+            // Проверяем первые 20 строк (или меньше, если таблица маленькая)
+            int checkRows = Math.Min(20, dataManager.OriginalTable.Rows.Count);
+            bool allNumbers = true;
+            bool allDates = true;
+            int nonEmptyCount = 0;
+
+            for (int i = 0; i < checkRows; i++)
+            {
+                object value = dataManager.OriginalTable.Rows[i][col];
+
+                // Пропускаем пустые значения
+                if (value == null || value == DBNull.Value || string.IsNullOrWhiteSpace(value.ToString()))
+                    continue;
+
+                nonEmptyCount++;
+                string strValue = value.ToString().Trim();
+
+                // Проверяем, является ли значение числом
+                if (allNumbers && !decimal.TryParse(strValue, System.Globalization.NumberStyles.Any, null, out _))
+                    allNumbers = false;
+
+                // Проверяем, является ли значение датой
+                if (allDates && !DateTime.TryParse(strValue, out _))
+                    allDates = false;
+
+                // Если уже понятно, что ни то, ни другое - выходим
+                if (!allNumbers && !allDates)
+                    break;
+            }
+
+            // Если все непустые значения - числа, возвращаем decimal
+            if (allNumbers && nonEmptyCount > 0)
+                return typeof(decimal);
+
+            // Если все непустые значения - даты, возвращаем DateTime
+            if (allDates && nonEmptyCount > 0)
+                return typeof(DateTime);
+
+            // Иначе возвращаем оригинальный тип
+            return col.DataType;
+        }
 
         private string GetDataTypeDescription(Type type)
         {

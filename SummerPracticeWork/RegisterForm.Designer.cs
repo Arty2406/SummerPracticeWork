@@ -103,7 +103,6 @@
             txtRegConfirm.Name = "txtRegConfirm";
             txtRegConfirm.Size = new Size(465, 27);
             txtRegConfirm.TabIndex = 2;
-            txtRegConfirm.TextChanged += txtRegConfirm_TextChanged;
             // 
             // label1
             // 

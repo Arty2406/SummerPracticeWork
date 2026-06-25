@@ -33,6 +33,7 @@ namespace SummerPractice
 
             Word.Application wordApp = null;
             Word.Document doc = null;
+            Word.Table wordTable = null;  // <-- Объявляем здесь, чтобы было видно в finally
             bool wordVisible = false;
 
             try
@@ -77,14 +78,12 @@ namespace SummerPractice
 
                 if (rowCount == 0 || colCount == 0)
                 {
-                    doc.Close(false);
-                    wordApp.Quit(false);
-                    wordVisible = true;
+                    // Здесь можно сразу вернуть результат — освобождение сделаем в finally
                     return new ReportResult { Success = false, ErrorMessage = "Таблица пуста. Нечего включать в отчёт." };
                 }
 
                 // Создаём таблицу в Word
-                Word.Table wordTable = doc.Tables.Add(selection.Range, rowCount + 1, colCount);
+                wordTable = doc.Tables.Add(selection.Range, rowCount + 1, colCount);
                 wordTable.Borders.Enable = 1;
 
                 // Заголовки
@@ -106,7 +105,6 @@ namespace SummerPractice
                         Word.Cell cell = wordTable.Cell(currentRow, i + 1);
                         object cellValue = dgvRow.Cells[visibleCols[i].Index].Value;
 
-                        // Форматируем даты без времени
                         if (cellValue is DateTime dt)
                             cell.Range.Text = dt.ToString("dd.MM.yyyy");
                         else
@@ -126,10 +124,6 @@ namespace SummerPractice
             }
             catch (System.Runtime.InteropServices.COMException ex)
             {
-                try { doc?.Close(false); } catch { }
-                if (wordApp != null && !wordVisible)
-                    try { wordApp.Quit(false); } catch { }
-
                 return new ReportResult
                 {
                     Success = false,
@@ -139,22 +133,47 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                try { doc?.Close(false); } catch { }
-                if (wordApp != null && !wordVisible)
-                    try { wordApp.Quit(false); } catch { }
-
                 return new ReportResult { Success = false, ErrorMessage = ex.Message };
             }
             finally
             {
-                if (!wordVisible)
+                // Освобождаем в строгом порядке: ячейки/таблица → документ → приложение
+                try
+                {
+                    if (wordTable != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordTable);
+                        wordTable = null;
+                    }
+                }
+                catch { }
+
+                try
                 {
                     if (doc != null)
-                        try { System.Runtime.InteropServices.Marshal.ReleaseComObject(doc); } catch { }
-                    if (wordApp != null)
-                        try { System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp); } catch { }
+                    {
+                        doc.Close(false);
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
+                        doc = null;
+                    }
                 }
+                catch { }
+
+                try
+                {
+                    if (wordApp != null)
+                    {
+                        // Если Word уже был видимым (пользователь сам открыл), не нужно принудительно закрывать
+                        if (!wordVisible)
+                            wordApp.Quit();
+
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
+                        wordApp = null;
+                    }
+                }
+                catch { }
             }
         }
+
     }
 }

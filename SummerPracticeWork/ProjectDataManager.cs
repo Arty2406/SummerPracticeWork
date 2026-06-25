@@ -8,7 +8,7 @@ namespace SummerPractice
 {
     public class ForeignKeyInfo
     {
-        public string ParentTable { get; set; }   // Родительская таблица (на которую ссылаются)
+        public string ParentTable { get; set; }   // родительская таблица (на которую ссылаются)
         public string ParentColumn { get; set; }  // Поле PK в родительской таблице
         public string ChildTable { get; set; }    // Дочерняя таблица (содержит FK)
         public string ChildColumn { get; set; }   // Поле FK в дочерней таблице
@@ -262,7 +262,7 @@ namespace SummerPractice
                 {
                     using var conn = new OleDbConnection(connStr);
                     using var cmd = new OleDbCommand(checkSql, conn);
-                    cmd.Parameters.AddWithValue("@p1", pkValue);
+                    cmd.Parameters.AddWithValue("?", pkValue); // <-- ИСПРАВЛЕНО
                     conn.Open();
 
                     int count = Convert.ToInt32(cmd.ExecuteScalar());
@@ -294,11 +294,31 @@ namespace SummerPractice
             try
             {
                 DataTable changes = originalTable.GetChanges();
-                if (changes != null)
+                if (changes == null)
+                    return new SaveResult { Success = true }; // Изменений нет
+
+                foreach (DataRow row in changes.Rows)
                 {
-                    foreach (DataRow row in changes.Rows)
+                    if (row.RowState == DataRowState.Deleted)
                     {
-                        if (row.RowState == DataRowState.Deleted)
+                        var violations = CheckForeignKeyViolations(row);
+                        if (violations.Count > 0)
+                        {
+                            originalTable.RejectChanges();
+                            return new SaveResult
+                            {
+                                Success = false,
+                                IsForeignKeyViolation = true,
+                                ErrorMessage = "Нельзя удалить запись — существуют связанные данные в других таблицах:\n\n"
+                                    + string.Join("\n", violations)
+                                    + "\n\nСначала удалите связанные записи из дочерних таблиц."
+                            };
+                        }
+                    }
+                    else if (row.RowState == DataRowState.Modified)
+                    {
+                        // Если изменилось поле, участвующее в связях, тоже проверяем FK
+                        if (HasKeyOrForeignKeyChanged(row))
                         {
                             var violations = CheckForeignKeyViolations(row);
                             if (violations.Count > 0)
@@ -308,9 +328,9 @@ namespace SummerPractice
                                 {
                                     Success = false,
                                     IsForeignKeyViolation = true,
-                                    ErrorMessage = "Нельзя удалить запись — существуют связанные данные в других таблицах:\n\n"
+                                    ErrorMessage = "Изменение невозможно — нарушаются связи с другими таблицами:\n\n"
                                         + string.Join("\n", violations)
-                                        + "\n\nСначала удалите связанные записи из дочерних таблиц."
+                                        + "\n\nИзмените или удалите связанные записи сначала."
                                 };
                             }
                         }
@@ -333,6 +353,32 @@ namespace SummerPractice
                 try { originalTable.RejectChanges(); } catch { }
                 return new SaveResult { Success = false, ErrorMessage = ex.Message };
             }
+        }
+
+        private bool HasKeyOrForeignKeyChanged(DataRow row)
+        {
+            // Проверяем, изменилось ли хоть одно поле, которое участвует в связях.
+            // Самый простой вариант — проверять все поля, но лучше хранить список ключевых колонок.
+            foreach (DataColumn col in row.Table.Columns)
+            {
+                if (!row.HasVersion(DataRowVersion.Original))
+                    continue;
+
+                object original = row[col, DataRowVersion.Original];
+                object current = row[col];
+
+                bool originalIsNull = (original == null || original == DBNull.Value);
+                bool currentIsNull = (current == null || current == DBNull.Value);
+
+                if (originalIsNull && currentIsNull)
+                    continue;
+                if (originalIsNull != currentIsNull)
+                    return true;
+
+                if (!object.Equals(original, current))
+                    return true;
+            }
+            return false;
         }
 
         private string FormatOleDbError(OleDbException ex)

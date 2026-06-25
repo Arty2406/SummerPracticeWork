@@ -44,14 +44,14 @@ namespace SummerPractice
                 doc = wordApp.Documents.Add();
                 Word.Selection selection = wordApp.Selection;
 
-                // Заголовок
+                // заголовок
                 selection.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
                 selection.Font.Size = 16;
                 selection.Font.Bold = 1;
                 selection.TypeText($"Отчёт по таблице «{tableName}»");
                 selection.TypeParagraph();
 
-                // Информация
+                // информация
                 selection.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphLeft;
                 selection.Font.Size = 11;
                 selection.Font.Bold = 0;
@@ -65,7 +65,7 @@ namespace SummerPractice
                 selection.TypeParagraph();
                 selection.TypeParagraph();
 
-                // Получаем видимые строки и столбцы
+                // получение вилимих строк и столбцов
                 var visibleRows = dgv.Rows.Cast<DataGridViewRow>()
                     .Where(r => !r.IsNewRow && r.Visible)
                     .ToList();

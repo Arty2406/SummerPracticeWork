@@ -12,6 +12,7 @@ namespace SummerPractice
     {
         private ProjectDataManager dataManager;
         private bool isAdminMode = false;
+        private List<string> primaryKeyColumns = new List<string>();
 
         public ProjectForm()
         {
@@ -32,6 +33,8 @@ namespace SummerPractice
 
             string connStr = $@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};";
             dataManager = new ProjectDataManager(connStr);
+
+            dataGridViewMain.DefaultValuesNeeded += DataGridViewMain_DefaultValuesNeeded;
 
             this.Load += ProjectForm_Load;
         }
@@ -70,9 +73,7 @@ namespace SummerPractice
             return CurrentUser.IsLoggedIn && CurrentUser.IsAdmin;
         }
 
-        // =====================================================================
-        // ИСПРАВЛЕНИЕ 1: Безопасное завер редактирования перед любыми операциями
-        // =====================================================================
+        // безопасное завершение редактирования перед любыми операциями
         private void SafeEndEdit()
         {
             try
@@ -81,27 +82,22 @@ namespace SummerPractice
                 {
                     dataGridViewMain.EndEdit();
                 }
-                // Дополнительно: завершаем редактирование на уровне BindingContext
+                // завершение редактирования на уровне BindingContext
                 if (dataGridViewMain.DataSource != null)
                 {
                     dataGridViewMain.BindingContext[dataGridViewMain.DataSource].EndCurrentEdit();
                 }
             }
-            catch
-            {
-                // Игнорируем ошибки EndEdit — они не критичны
-            }
+            catch { }
         }
 
-        // =====================================================================
-        // ИСПРАВЛЕНИЕ 2: Полностью переписанный обработчик переключения таблиц
-        // =====================================================================
+        // обработчик переключения таблиц
         private void ComboBoxTables_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (comboBoxTables.SelectedItem == null) return;
             if (comboBoxTables.SelectedItem.ToString() == dataManager.CurrentTableName) return; // Та же таблица
 
-            // ИСПРАВЛЕНИЕ: Завершаем редактирование ПЕРЕД проверкой изменений
+            // завершение редактирования перед проверкой изменений
             SafeEndEdit();
 
             // проверка несохранённых изменений
@@ -137,19 +133,30 @@ namespace SummerPractice
 
             try
             {
-                // ИСПРАВЛЕНИЕ: Если были в режиме редактирования — выходим из него
+                // выход из режима редактирования
                 if (isAdminMode)
                 {
-                    ExitEditModeSilently(); // Тихий выход без MessageBox
+                    ExitEditModeSilently();
                 }
 
                 dataManager.SelectTable(tableName);
 
-                // ИСПРАВЛЕНИЕ: Полностью сбрасываем DataSource перед установкой нового
+                primaryKeyColumns = dataManager.GetPrimaryKeyColumns();
+
+                // сброс DataSource перед установкой нового
                 dataGridViewMain.DataSource = null;
                 dataGridViewMain.Refresh();
-
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
+
+                foreach (string pkCol in primaryKeyColumns)
+                {
+                    if (dataGridViewMain.Columns.Contains(pkCol))
+                    {
+                        dataGridViewMain.Columns[pkCol].ReadOnly = true;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor = System.Drawing.Color.Gray;
+                    }
+                }
 
                 // форматирование столбцов с датами
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
@@ -169,12 +176,12 @@ namespace SummerPractice
             }
         }
 
-        // ИСПРАВЛЕНИЕ 3: Тихий выход из режима редактирования (без MessageBox)
+        // выход из режима редактирования (без MessageBox)
         private void ExitEditModeSilently()
         {
             SafeEndEdit();
 
-            // Откатываем несохранённые изменения, если они есть
+            // Откат несохранённых изменений, если они были
             if (dataManager.HasUnsavedChanges)
             {
                 try { dataManager.OriginalTable?.RejectChanges(); } catch { }
@@ -204,13 +211,14 @@ namespace SummerPractice
             }
         }
 
+        #region Изменение таблицы
+
         // кнопка для изменения таблицы
         private void btnChange_Click(object sender, EventArgs e)
         {
             if (!IsAdmin())
             {
-                MessageBox.Show(
-                    "Эта функция доступна только администратору.\n\nВойдите в систему под учётной записью администратора.",
+                MessageBox.Show("Эта функция доступна только администратору.\n\nВойдите в систему под учётной записью администратора.",
                     "Доступ запрещён", MessageBoxButtons.OK, MessageBoxIcon.Stop);
                 return;
             }
@@ -221,7 +229,7 @@ namespace SummerPractice
                 return;
             }
 
-            // ИСПРАВЛЕНИЕ: Завершаем редактирование перед входом в режим
+            // завершение редактирования перед входом в режим
             SafeEndEdit();
 
             // сброс таблицы/возврат в изначальное состояние
@@ -252,7 +260,8 @@ namespace SummerPractice
         // вспомогательная функция для btnChange_Click
         private void ExitEditMode()
         {
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ: Завершаем редактирование
+            // завершение редактирования
+            SafeEndEdit();
 
             if (dataManager.HasUnsavedChanges)
             {
@@ -270,7 +279,7 @@ namespace SummerPractice
                 }
                 else
                 {
-                    // ИСПРАВЛЕНИЕ: Явно откатываем изменения при выборе "Нет"
+                    // откат изменений при выборе "Нет"
                     try { dataManager.OriginalTable?.RejectChanges(); } catch { }
                 }
             }
@@ -288,6 +297,8 @@ namespace SummerPractice
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        #endregion
+
         #region Фильтр
 
         private void btnFilter_Click(object sender, EventArgs e)
@@ -299,7 +310,7 @@ namespace SummerPractice
                 return;
             }
 
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ
+            SafeEndEdit();
 
             using var filterDialog = CreateFilterDialog();
 
@@ -406,7 +417,7 @@ namespace SummerPractice
         {
             try
             {
-                SafeEndEdit(); // ИСПРАВЛЕНИЕ
+                SafeEndEdit();
 
                 if (dataGridViewMain.DataSource is DataView)
                     dataGridViewMain.DataSource = dataManager.OriginalTable;
@@ -484,7 +495,7 @@ namespace SummerPractice
                 return;
             }
 
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ
+            SafeEndEdit();
 
             using var sortDialog = CreateSortDialog();
 
@@ -627,7 +638,7 @@ namespace SummerPractice
         #endregion
 
         #region Поиск
-
+        
         private void btnSearch_Click(object sender, EventArgs e)
         {
             if (dataManager.OriginalTable == null)
@@ -637,7 +648,7 @@ namespace SummerPractice
                 return;
             }
 
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ
+            SafeEndEdit();
 
             using var searchDialog = CreateSearchDialog();
 
@@ -730,7 +741,7 @@ namespace SummerPractice
         {
             try
             {
-                SafeEndEdit(); // ИСПРАВЛЕНИЕ
+                SafeEndEdit();
 
                 if (dataGridViewMain.DataSource is DataView)
                     dataGridViewMain.DataSource = dataManager.OriginalTable;
@@ -765,7 +776,7 @@ namespace SummerPractice
 
         private bool TrySaveChanges()
         {
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ: Более безопасный EndEdit
+            SafeEndEdit();
 
             var result = dataManager.TrySaveChanges();
 
@@ -796,7 +807,7 @@ namespace SummerPractice
                 return;
             }
 
-            SafeEndEdit(); // ИСПРАВЛЕНИЕ
+            SafeEndEdit();
 
             string userName = CurrentUser.IsLoggedIn ? CurrentUser.Login : "Неизвестно";
             string tableName = comboBoxTables.SelectedItem?.ToString() ?? "Таблица";
@@ -818,6 +829,18 @@ namespace SummerPractice
         #endregion
 
         #region Валидация и удаление (UI-логика)
+
+        private void DataGridViewMain_DefaultValuesNeeded(object sender, DataGridViewRowEventArgs e)
+        {
+            // Автоматически заполняем первичные ключи при добавлении новой строки
+            foreach (string pkCol in primaryKeyColumns)
+            {
+                if (dataGridViewMain.Columns.Contains(pkCol))
+                {
+                    e.Row.Cells[pkCol].Value = dataManager.GetNextPrimaryKeyValue(pkCol);
+                }
+            }
+        }
 
         private void DataGridViewMain_CellValidating(object sender, DataGridViewCellValidatingEventArgs e)
         {
@@ -882,15 +905,13 @@ namespace SummerPractice
                 if (violations.Count > 0)
                 {
                     e.Cancel = true;
-                    MessageBox.Show(
-                        "Нельзя удалить строку — существуют связанные данные:\n\n" + string.Join("\n", violations) +
+                    MessageBox.Show("Нельзя удалить строку — существуют связанные данные:\n\n" + string.Join("\n", violations) +
                         "\n\nСначала удалите связанные записи из дочерних таблиц.",
                         "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                var result = MessageBox.Show(
-                    "Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
+                var result = MessageBox.Show("Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
                     "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
                 if (result == DialogResult.No)
@@ -917,16 +938,14 @@ namespace SummerPractice
                 var violations = dataManager.CheckForeignKeyViolations(row);
                 if (violations.Count > 0)
                 {
-                    MessageBox.Show(
-                        "Нельзя удалить выбранные строки — есть связанные данные:\n\n" + string.Join("\n", violations) +
+                    MessageBox.Show("Нельзя удалить выбранные строки — есть связанные данные:\n\n" + string.Join("\n", violations) +
                         "\n\nСначала удалите связанные записи из дочерних таблиц.",
                         "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
             }
 
-            var result = MessageBox.Show(
-                $"Удалить выбранные строки ({dataGridViewMain.SelectedRows.Count})?",
+            var result = MessageBox.Show($"Удалить выбранные строки ({dataGridViewMain.SelectedRows.Count})?",
                 "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
@@ -957,7 +976,7 @@ namespace SummerPractice
             if (dataManager.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
                 return col.DataType;
 
-            // Проверяем первые 20 строк (или меньше, если таблица маленькая)
+            // проверка первых 20 строк (или меньше, если таблица маленькая)
             int checkRows = Math.Min(20, dataManager.OriginalTable.Rows.Count);
             bool allNumbers = true;
             bool allDates = true;
@@ -967,22 +986,18 @@ namespace SummerPractice
             {
                 object value = dataManager.OriginalTable.Rows[i][col];
 
-                // Пропускаем пустые значения
                 if (value == null || value == DBNull.Value || string.IsNullOrWhiteSpace(value.ToString()))
                     continue;
 
                 nonEmptyCount++;
                 string strValue = value.ToString().Trim();
 
-                // Проверяем, является ли значение числом
                 if (allNumbers && !decimal.TryParse(strValue, System.Globalization.NumberStyles.Any, null, out _))
                     allNumbers = false;
 
-                // Проверяем, является ли значение датой
                 if (allDates && !DateTime.TryParse(strValue, out _))
                     allDates = false;
 
-                // Если уже понятно, что ни то, ни другое - выходим
                 if (!allNumbers && !allDates)
                     break;
             }

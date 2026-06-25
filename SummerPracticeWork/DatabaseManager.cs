@@ -11,6 +11,7 @@ namespace SummerPractice
     {
         private static string GetConnectionString()
         {
+            // формирование строки подключения
             string dbName = "CourseWork.accdb";
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
             string dbPath = Path.Combine(basePath, dbName);
@@ -23,6 +24,7 @@ namespace SummerPractice
 
         private static string HashPassword(string password)
         {
+            // хеширование пароля
             using var sha256 = SHA256.Create();
             byte[] sourceBytes = Encoding.UTF8.GetBytes(password);
             byte[] hashBytes = sha256.ComputeHash(sourceBytes);
@@ -45,6 +47,7 @@ namespace SummerPractice
             if (count > 0)
                 throw new Exception("Такой логин уже существует.");
 
+            // формирование клиента: выдача ему роли, хеширование пароля
             string hash = HashPassword(pass);
             string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
             using var insertCmd = new OleDbCommand(insertSql, conn);
@@ -76,6 +79,7 @@ namespace SummerPractice
             string currentRole = reader.GetString(reader.GetOrdinal("Роль"));
             reader.Close();
 
+            // формирование администратора системы
             if (currentRole != "Администратор")
             {
                 string updateSql = "UPDATE Пользователи SET Роль = ? WHERE Логин = ?";

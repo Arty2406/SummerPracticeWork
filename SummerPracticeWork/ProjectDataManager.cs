@@ -9,9 +9,9 @@ namespace SummerPractice
     public class ForeignKeyInfo
     {
         public string ParentTable { get; set; }   // родительская таблица (на которую ссылаются)
-        public string ParentColumn { get; set; }  // Поле PK в родительской таблице
-        public string ChildTable { get; set; }    // Дочерняя таблица (содержит FK)
-        public string ChildColumn { get; set; }   // Поле FK в дочерней таблице
+        public string ParentColumn { get; set; }  // поле PK в родительской таблице
+        public string ChildTable { get; set; }    // дочерняя таблица (содержит FK)
+        public string ChildColumn { get; set; }   // поле FK в дочерней таблице
     }
 
     public class SaveResult
@@ -194,6 +194,67 @@ namespace SummerPractice
         #endregion
 
         #region Внешние ключи
+
+        public List<string> GetPrimaryKeyColumns()
+        {
+            var pkColumns = new List<string>();
+            if (string.IsNullOrEmpty(currentTableName)) return pkColumns;
+
+            using var conn = new OleDbConnection(connStr);
+            conn.Open();
+
+            var pkSchema = conn.GetOleDbSchemaTable(
+                OleDbSchemaGuid.Primary_Keys,
+                new object[] { null, null, currentTableName });
+
+            if (pkSchema != null)
+            {
+                foreach (DataRow row in pkSchema.Rows)
+                {
+                    string columnName = row["COLUMN_NAME"]?.ToString();
+                    if (!string.IsNullOrEmpty(columnName))
+                        pkColumns.Add(columnName);
+                }
+            }
+
+            return pkColumns;
+        }
+
+        public object GetNextPrimaryKeyValue(string columnName)
+        {
+            if (originalTable == null || !originalTable.Columns.Contains(columnName))
+                return null;
+
+            DataColumn col = originalTable.Columns[columnName];
+            decimal maxValue = 0;
+            bool hasValues = false;
+
+            foreach (DataRow row in originalTable.Rows)
+            {
+                if (row.RowState == DataRowState.Deleted) continue;
+                object value = row[columnName];
+                if (value == null || value == DBNull.Value) continue;
+
+                try
+                {
+                    decimal current = Convert.ToDecimal(value);
+                    if (current > maxValue) maxValue = current;
+                    hasValues = true;
+                }
+                catch { }
+            }
+
+            decimal nextValue = hasValues ? maxValue + 1 : 1;
+
+            // возврат в нужном типе
+            if (col.DataType == typeof(int)) return (int)nextValue;
+            if (col.DataType == typeof(long)) return (long)nextValue;
+            if (col.DataType == typeof(short)) return (short)nextValue;
+            if (col.DataType == typeof(byte)) return (byte)nextValue;
+            if (col.DataType == typeof(decimal)) return nextValue;
+            if (col.DataType == typeof(double)) return (double)nextValue;
+            return nextValue;
+        }
 
         public void LoadForeignKeys()
         {

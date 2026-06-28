@@ -93,7 +93,6 @@ namespace SummerPractice
 
         private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
-            // Подавляем все ошибки ComboBox-столбцов (несовпадение типов при биндинге)
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn)
             {
                 System.Diagnostics.Debug.WriteLine(
@@ -147,10 +146,8 @@ namespace SummerPractice
                 dataManager.SelectTable(tableName);
                 primaryKeyColumns = dataManager.GetPrimaryKeyColumns();
 
-                // Загружаем lookup-данные для FK-столбцов текущей таблицы
                 currentLookups = dataManager.GetLookupsForCurrentTable();
 
-                // Сбрасываем DataSource и перестраиваем столбцы с ComboBox
                 dataGridViewMain.DataSource = null;
                 dataGridViewMain.Columns.Clear();
                 dataGridViewMain.Refresh();
@@ -158,17 +155,13 @@ namespace SummerPractice
                 dataGridViewMain.DataSource = null;
                 dataGridViewMain.Columns.Clear();
 
-                // Сначала строим ColSchema вручную на основе OriginalTable,
-                // потом один раз присваиваем DataSource:
                 SetupAllColumns(dataManager.OriginalTable, dataManager.GetPrimaryKeyColumns(), currentLookups);
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
-                // Сбрасываем ошибки ячеек после привязки данных
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
                     foreach (DataGridViewCell cell in row.Cells)
                         cell.ErrorText = "";
 
-                // PK-столбцы — только для чтения + серый цвет
                 foreach (string pkCol in primaryKeyColumns)
                 {
                     if (dataGridViewMain.Columns.Contains(pkCol))
@@ -179,7 +172,6 @@ namespace SummerPractice
                     }
                 }
 
-                // Форматирование дат
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
                 {
                     if (col is DataGridViewComboBoxColumn) continue; // ComboBox дату не форматируем

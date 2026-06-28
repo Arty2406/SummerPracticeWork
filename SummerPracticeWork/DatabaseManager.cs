@@ -11,25 +11,42 @@ namespace SummerPractice
     {
         private static string GetConnectionString()
         {
-            // формирование строки подключения
             string dbName = "CourseWork.accdb";
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            string dbPath = Path.Combine(basePath, dbName);
 
-            if (!File.Exists(dbPath))
-                throw new FileNotFoundException($"Файл БД не найден: {dbPath}. Убедитесь, что CourseWork.accdb лежит в bin\\Debug\\...");
+            // Поиск файла в нескольких местах
+            string[] paths = {
+                Path.Combine(basePath, dbName),
+                Path.Combine(basePath, "..", "..", "..", dbName),
+                Path.Combine(basePath, "..", "..", dbName),
+                Path.Combine(basePath, "..", dbName),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dbName)
+            };
 
-            return $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};";
+            string dbPath = null;
+            foreach (var path in paths)
+            {
+                string fullPath = Path.GetFullPath(path);
+                if (File.Exists(fullPath))
+                {
+                    dbPath = fullPath;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(dbPath))
+                throw new FileNotFoundException($"Файл БД не найден. Искали в:\n{string.Join("\n", paths)}");
+
+            return $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};Persist Security Info=False;OLE DB Services = -4;";
         }
 
         private static string HashPassword(string password)
         {
-            // хеширование пароля
             using var sha256 = SHA256.Create();
             byte[] sourceBytes = Encoding.UTF8.GetBytes(password);
             byte[] hashBytes = sha256.ComputeHash(sourceBytes);
 
-            StringBuilder sb = new StringBuilder();
+            var sb = new StringBuilder(hashBytes.Length * 2);
             foreach (byte b in hashBytes)
                 sb.Append(b.ToString("x2"));
             return sb.ToString();
@@ -37,91 +54,105 @@ namespace SummerPractice
 
         public static void RegisterGuest(string login, string pass)
         {
-            using var conn = new OleDbConnection(GetConnectionString());
-            conn.Open();
+            if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(pass))
+                throw new ArgumentException("Логин и пароль не могут быть пустыми.");
 
+            string connStr = GetConnectionString();
+
+            // Проверка существования пользователя
             string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = ?";
-            using var checkCmd = new OleDbCommand(checkSql, conn);
-            checkCmd.Parameters.AddWithValue("?", login);
-            int count = (int)checkCmd.ExecuteScalar();
-            if (count > 0)
+            var result = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql,
+                new[] { new OleDbParameter("?", login) });
+
+            if (result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0][0]) > 0)
                 throw new Exception("Такой логин уже существует.");
 
-            // формирование клиента: выдача ему роли, хеширование пароля
+            // Вставка нового пользователя
             string hash = HashPassword(pass);
             string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
-            using var insertCmd = new OleDbCommand(insertSql, conn);
-            insertCmd.Parameters.AddWithValue("?", login);
-            insertCmd.Parameters.AddWithValue("?", hash);
-            insertCmd.Parameters.AddWithValue("?", "Гость");
 
-            insertCmd.ExecuteNonQuery();
+            SafeDatabaseHelper.ExecuteNonQuery(connStr, insertSql,
+                new[] {
+                    new OleDbParameter("?", login),
+                    new OleDbParameter("?", hash),
+                    new OleDbParameter("?", "Гость")
+                });
         }
 
         public static void EnsureAdminCreated()
         {
-            using var conn = new OleDbConnection(GetConnectionString());
-            conn.Open();
-
-            string adminLogin = "AdminArty";
-            string checkUserSql = "SELECT Роль FROM Пользователи WHERE Логин = ?";
-            using var checkCmd = new OleDbCommand(checkUserSql, conn);
-            checkCmd.Parameters.AddWithValue("?", adminLogin);
-
-            var reader = checkCmd.ExecuteReader();
-            if (!reader.Read())
+            try
             {
-                reader.Close();
-                CreateAdminUser(conn, adminLogin);
-                return;
+                string connStr = GetConnectionString();
+                string adminLogin = "AdminArty";
+
+                // Проверяем существование пользователя
+                string checkSql = "SELECT Роль FROM Пользователи WHERE Логин = ?";
+                var result = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql,
+                    new[] { new OleDbParameter("?", adminLogin) });
+
+                if (result.Rows.Count == 0)
+                {
+                    // Создаем администратора
+                    string hash = HashPassword("24062007");
+                    string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
+                    SafeDatabaseHelper.ExecuteNonQuery(connStr, insertSql,
+                        new[] {
+                            new OleDbParameter("?", adminLogin),
+                            new OleDbParameter("?", hash),
+                            new OleDbParameter("?", "Администратор")
+                        });
+                }
+                else
+                {
+                    string currentRole = result.Rows[0]["Роль"]?.ToString();
+                    if (currentRole != "Администратор")
+                    {
+                        string updateSql = "UPDATE Пользователи SET Роль = ? WHERE Логин = ?";
+                        SafeDatabaseHelper.ExecuteNonQuery(connStr, updateSql,
+                            new[] {
+                                new OleDbParameter("?", "Администратор"),
+                                new OleDbParameter("?", adminLogin)
+                            });
+                    }
+                }
             }
-
-            string currentRole = reader.GetString(reader.GetOrdinal("Роль"));
-            reader.Close();
-
-            // формирование администратора системы
-            if (currentRole != "Администратор")
+            catch (AccessViolationException ex)
             {
-                string updateSql = "UPDATE Пользователи SET Роль = ? WHERE Логин = ?";
-                using var updateCmd = new OleDbCommand(updateSql, conn);
-                updateCmd.Parameters.AddWithValue("?", "Администратор");
-                updateCmd.Parameters.AddWithValue("?", adminLogin);
-                updateCmd.ExecuteNonQuery();
+                System.Diagnostics.Debug.WriteLine($"AccessViolation in EnsureAdminCreated: {ex.Message}");
+                // Не выбрасываем исключение, чтобы приложение не падало
             }
-        }
-
-        private static void CreateAdminUser(OleDbConnection conn, string adminLogin)
-        {
-            string hash = HashPassword("24062007");
-            string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
-            using var insertCmd = new OleDbCommand(insertSql, conn);
-            insertCmd.Parameters.AddWithValue("?", adminLogin);
-            insertCmd.Parameters.AddWithValue("?", hash);
-            insertCmd.Parameters.AddWithValue("?", "Администратор");
-            insertCmd.ExecuteNonQuery();
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"EnsureAdminCreated error: {ex.Message}");
+            }
         }
 
         public static DataTable GetUserByLogin(string login)
         {
-            var result = new DataTable();
-            using var conn = new OleDbConnection(GetConnectionString());
-
-            string sql = "SELECT Логин, Пароль, Роль FROM Пользователи WHERE Логин = ?";
-            using var cmd = new OleDbCommand(sql, conn);
-            cmd.Parameters.AddWithValue("?", login);
-
-            conn.Open();
-            using var adapter = new OleDbDataAdapter(cmd);
-            adapter.Fill(result);
-            return result;
+            try
+            {
+                string connStr = GetConnectionString();
+                string sql = "SELECT Логин, Пароль, Роль FROM Пользователи WHERE Логин = ?";
+                return SafeDatabaseHelper.ExecuteQuery(connStr, sql,
+                    new[] { new OleDbParameter("?", login) });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetUserByLogin error: {ex.Message}");
+                return new DataTable();
+            }
         }
 
         public static bool VerifyPassword(string inputPassword, string storedHash)
         {
+            if (string.IsNullOrEmpty(inputPassword) || string.IsNullOrEmpty(storedHash))
+                return false;
+
             try
             {
                 string hash = HashPassword(inputPassword);
-                return hash == storedHash;
+                return string.Equals(hash, storedHash, StringComparison.Ordinal);
             }
             catch
             {

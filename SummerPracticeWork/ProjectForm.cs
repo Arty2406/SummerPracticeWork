@@ -15,7 +15,7 @@ namespace SummerPractice
         private List<string> primaryKeyColumns = new List<string>();
 
         // Хранит текущие lookup-описания для активной таблицы
-        // (FK-столбец → описание справочника)
+        // (FK-столбец - описание справочника)
         private List<LookupInfo> currentLookups = new List<LookupInfo>();
 
         public ProjectForm()
@@ -42,9 +42,6 @@ namespace SummerPractice
             dataGridViewMain.CellValidating += DataGridViewMain_CellValidating;
             dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
             dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
-
-            // Подавляем стандартные ошибки DataGridView при работе с ComboBox-столбцами
-            // (например, когда значение FK не найдено в списке справочника)
             dataGridViewMain.DataError += DataGridViewMain_DataError;
 
             this.Load += ProjectForm_Load;
@@ -81,7 +78,6 @@ namespace SummerPractice
 
         private bool IsAdmin() => CurrentUser.IsLoggedIn && CurrentUser.IsAdmin;
 
-        // ─── безопасное завершение редактирования ────────────────────────────────
         private void SafeEndEdit()
         {
             try
@@ -95,25 +91,25 @@ namespace SummerPractice
             catch { }
         }
 
-        // ─── обработчик DataError: подавляем «Value is not valid» для ComboBox-столбцов ──
         private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
-            // Если ошибка в ComboBox-столбце — просто скрываем её,
-            // чтобы FK-значения, которых нет в справочнике, не вызывали исключений.
+            // Подавляем все ошибки ComboBox-столбцов (несовпадение типов при биндинге)
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn)
             {
+                System.Diagnostics.Debug.WriteLine(
+                    $"ComboBox DataError col={dataGridViewMain.Columns[e.ColumnIndex].Name} " +
+                    $"row={e.RowIndex} ctx={e.Context}: {e.Exception?.Message}");
+                e.ThrowException = false;
                 e.Cancel = true;
                 return;
             }
 
-            // Остальные ошибки отображаем обычным образом
             if (e.Exception != null)
                 MessageBox.Show($"Ошибка данных: {e.Exception.Message}", "Ошибка",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             e.Cancel = true;
         }
 
-        // ─── переключение таблиц ─────────────────────────────────────────────────
         private void ComboBoxTables_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (comboBoxTables.SelectedItem == null) return;
@@ -167,6 +163,11 @@ namespace SummerPractice
                 SetupAllColumns(dataManager.OriginalTable, dataManager.GetPrimaryKeyColumns(), currentLookups);
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
+                // Сбрасываем ошибки ячеек после привязки данных
+                foreach (DataGridViewRow row in dataGridViewMain.Rows)
+                    foreach (DataGridViewCell cell in row.Cells)
+                        cell.ErrorText = "";
+
                 // PK-столбцы — только для чтения + серый цвет
                 foreach (string pkCol in primaryKeyColumns)
                 {
@@ -204,13 +205,14 @@ namespace SummerPractice
 
             foreach (DataColumn dc in table.Columns)
             {
-                var lookup = lookups.FirstOrDefault(l => l.FkColumn.Equals(dc.ColumnName, StringComparison.OrdinalIgnoreCase));
+                var lookup = lookups.FirstOrDefault(l =>
+                    l.FkColumn.Equals(dc.ColumnName, StringComparison.OrdinalIgnoreCase));
 
                 DataGridViewColumn col;
 
                 if (lookup != null)
                 {
-                    col = new DataGridViewComboBoxColumn
+                    var comboCol = new DataGridViewComboBoxColumn
                     {
                         DataSource = lookup.LookupTable,
                         ValueMember = "ValueMember",
@@ -219,6 +221,13 @@ namespace SummerPractice
                         FlatStyle = FlatStyle.Flat,
                         ToolTipText = $"Справочник: {lookup.ParentTable} → {lookup.DisplayColumn}"
                     };
+
+                    // ВАЖНО: ValueType должен совпадать с типом FK-колонки в основной таблице
+                    // Иначе DataGridView не может сопоставить значения при биндинге
+                    comboCol.ValueType = dc.DataType;
+                    comboCol.DefaultCellStyle.NullValue = DBNull.Value;
+
+                    col = comboCol;
                 }
                 else if (dc.DataType == typeof(DateTime))
                 {
@@ -311,19 +320,38 @@ namespace SummerPractice
             }
 
             SafeEndEdit();
-
             ResetAllViewStates();
             dataManager.ResetAll();
-
             dataManager.LoadForeignKeys();
+
+            // Перезагружаем lookups и перестраиваем столбцы, чтобы ComboBox-столбцы
+            // были актуальны и не вызывали рассогласования при редактировании
+            currentLookups = dataManager.GetLookupsForCurrentTable();
+
+            dataGridViewMain.DataSource = null;
+            dataGridViewMain.Columns.Clear();
+            SetupAllColumns(dataManager.OriginalTable, primaryKeyColumns, currentLookups);
+            dataGridViewMain.DataSource = dataManager.OriginalTable;
 
             isAdminMode = true;
             dataGridViewMain.ReadOnly = false;
             dataGridViewMain.AllowUserToAddRows = true;
             dataGridViewMain.AllowUserToDeleteRows = true;
 
-            // Разрешаем редактирование ComboBox-столбцов (кроме PK)
             UpdateComboBoxColumnsReadOnly(readOnly: false);
+
+            // PK — только для чтения
+            foreach (string pkCol in primaryKeyColumns)
+            {
+                if (dataGridViewMain.Columns.Contains(pkCol))
+                {
+                    dataGridViewMain.Columns[pkCol].ReadOnly = true;
+                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
+                        System.Drawing.Color.LightGray;
+                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
+                        System.Drawing.Color.Gray;
+                }
+            }
 
             btnChange.Text = "Завершить редактирование";
             btnChange.BackColor = System.Drawing.Color.OrangeRed;
@@ -938,7 +966,6 @@ namespace SummerPractice
         {
             if (!isAdminMode || e.RowIndex < 0) return;
 
-            // Для ComboBox-столбцов пропускаем проверку на пустоту (DBNull разрешён)
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn) return;
 
             try
@@ -952,8 +979,14 @@ namespace SummerPractice
                     for (int i = 0; i < row.Cells.Count; i++)
                     {
                         if (i == e.ColumnIndex) continue;
+
+                        // Пропускаем ComboBox-ячейки — их значение нельзя безопасно
+                        // читать через .Value во время валидации другой ячейки
+                        if (dataGridViewMain.Columns[i] is DataGridViewComboBoxColumn) continue;
+
                         object cellValue = row.Cells[i].Value;
-                        if (cellValue != null && !string.IsNullOrWhiteSpace(cellValue.ToString()))
+                        if (cellValue != null && cellValue != DBNull.Value &&
+                            !string.IsNullOrWhiteSpace(cellValue.ToString()))
                         {
                             hasOtherValues = true;
                             break;
@@ -961,16 +994,19 @@ namespace SummerPractice
                     }
 
                     bool wasFilled = row.Cells[e.ColumnIndex].Value != null &&
+                                     row.Cells[e.ColumnIndex].Value != DBNull.Value &&
                                      !string.IsNullOrWhiteSpace(row.Cells[e.ColumnIndex].Value.ToString());
 
                     if (hasOtherValues || wasFilled)
                     {
                         string colName = dataGridViewMain.Columns[e.ColumnIndex].HeaderText;
                         e.Cancel = true;
-                        row.Cells[e.ColumnIndex].ErrorText = $"Нельзя очистить поле «{colName}»: строка содержит данные.";
+                        row.Cells[e.ColumnIndex].ErrorText =
+                            $"Нельзя очистить поле «{colName}»: строка содержит данные.";
 
                         MessageBox.Show(
-                            $"Нельзя оставить поле «{colName}» пустым.\n\nСтрока содержит данные — либо заполните поле, либо удалите всю строку.",
+                            $"Нельзя оставить поле «{colName}» пустым.\n\n" +
+                            "Строка содержит данные — либо заполните поле, либо удалите всю строку.",
                             "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }

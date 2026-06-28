@@ -436,22 +436,41 @@ namespace SummerPractice
 
         private DataTable LoadLookupTable(OleDbConnection conn, string tableName, string pkCol, string displayCol)
         {
-            string sql = $"SELECT [{pkCol}], [{displayCol}] FROM [{tableName}] ORDER BY [{displayCol}]";
-
+            // Сначала читаем реальные данные через адаптер, чтобы получить правильный тип PK
             var dt = new DataTable();
-            using var cmd = new OleDbCommand(sql, conn);
-            using var da = new OleDbDataAdapter(cmd);
-            da.Fill(dt);
 
-            // Переименовываем столбцы для единообразия
-            dt.Columns[0].ColumnName = "ValueMember";
-            dt.Columns[1].ColumnName = "DisplayMember";
+            try
+            {
+                string sql = $"SELECT [{pkCol}], [{displayCol}] FROM [{tableName}] ORDER BY [{displayCol}]";
+                using var cmd = new OleDbCommand(sql, conn);
+                using var da = new OleDbDataAdapter(cmd);
+                da.Fill(dt); // Fill сохраняет реальные типы (Int32, String и т.д.)
 
-            // Добавляем пустую строку (для NULL / необязательных FK)
-            DataRow emptyRow = dt.NewRow();
-            emptyRow["ValueMember"] = DBNull.Value;
-            emptyRow["DisplayMember"] = "";
-            dt.Rows.InsertAt(emptyRow, 0);
+                // Переименовываем столбцы
+                dt.Columns[0].ColumnName = "ValueMember";
+                dt.Columns[1].ColumnName = "DisplayMember";
+
+                // Разрешаем NULL в ValueMember (для пустой строки)
+                dt.Columns["ValueMember"].AllowDBNull = true;
+
+                // Добавляем пустую строку первой (для необязательных FK)
+                DataRow emptyRow = dt.NewRow();
+                emptyRow["ValueMember"] = DBNull.Value;
+                emptyRow["DisplayMember"] = "";
+                dt.Rows.InsertAt(emptyRow, 0);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"LoadLookupTable error [{tableName}]: {ex.Message}");
+
+                // Fallback: возвращаем хотя бы пустую таблицу с правильными колонками
+                if (dt.Columns.Count == 0)
+                {
+                    dt.Columns.Add("ValueMember", typeof(int));
+                    dt.Columns.Add("DisplayMember", typeof(string));
+                    dt.Columns["ValueMember"].AllowDBNull = true;
+                }
+            }
 
             return dt;
         }
@@ -491,7 +510,10 @@ namespace SummerPractice
                     }
                     else if (row.RowState == DataRowState.Modified)
                     {
-                        if (HasKeyOrForeignKeyChanged(row))
+                        // Проверяем связи ТОЛЬКО если изменился первичный ключ.
+                        // Изменение FK-поля (выбор другого значения из справочника) — это нормально,
+                        // блокировать его не нужно.
+                        if (HasPrimaryKeyChanged(row))
                         {
                             var violations = CheckForeignKeyViolations(row);
                             if (violations.Count > 0)
@@ -501,7 +523,7 @@ namespace SummerPractice
                                 {
                                     Success = false,
                                     IsForeignKeyViolation = true,
-                                    ErrorMessage = "Изменение невозможно — нарушаются связи с другими таблицами:\n\n"
+                                    ErrorMessage = "Изменение первичного ключа невозможно — нарушаются связи с другими таблицами:\n\n"
                                         + string.Join("\n", violations)
                                         + "\n\nИзмените или удалите связанные записи сначала."
                                 };
@@ -528,15 +550,18 @@ namespace SummerPractice
             }
         }
 
-        private bool HasKeyOrForeignKeyChanged(DataRow row)
+        // Проверяет, изменился ли первичный ключ строки.
+        private bool HasPrimaryKeyChanged(DataRow row)
         {
-            foreach (DataColumn col in row.Table.Columns)
-            {
-                if (!row.HasVersion(DataRowVersion.Original))
-                    continue;
+            var pkCols = GetPrimaryKeyColumns();
 
-                object original = row[col, DataRowVersion.Original];
-                object current = row[col];
+            foreach (string pkCol in pkCols)
+            {
+                if (!row.Table.Columns.Contains(pkCol)) continue;
+                if (!row.HasVersion(DataRowVersion.Original)) continue;
+
+                object original = row[pkCol, DataRowVersion.Original];
+                object current = row[pkCol];
 
                 bool originalIsNull = (original == null || original == DBNull.Value);
                 bool currentIsNull = (current == null || current == DBNull.Value);
@@ -545,6 +570,7 @@ namespace SummerPractice
                 if (originalIsNull != currentIsNull) return true;
                 if (!object.Equals(original, current)) return true;
             }
+
             return false;
         }
 
@@ -567,6 +593,7 @@ namespace SummerPractice
 
             return errorMsg;
         }
+
 
         #endregion
 

@@ -21,6 +21,28 @@ namespace SummerPractice
         public bool IsForeignKeyViolation { get; set; }
     }
 
+    /// <summary>
+    /// Описывает одну FK-связь для текущей таблицы как дочерней,
+    /// дополненную данными справочника (родительской таблицы).
+    /// </summary>
+    public class LookupInfo
+    {
+        /// <summary>Столбец FK в текущей (дочерней) таблице.</summary>
+        public string FkColumn { get; set; }
+
+        /// <summary>Родительская (справочная) таблица.</summary>
+        public string ParentTable { get; set; }
+
+        /// <summary>PK-столбец родительской таблицы (хранится в FK).</summary>
+        public string ParentPkColumn { get; set; }
+
+        /// <summary>Столбец отображения из родительской таблицы (второй столбец / первый не-PK).</summary>
+        public string DisplayColumn { get; set; }
+
+        /// <summary>Все строки родительской таблицы: ValueMember → DisplayMember.</summary>
+        public DataTable LookupTable { get; set; }
+    }
+
     public class ProjectDataManager
     {
         private DataTable originalTable;
@@ -28,6 +50,8 @@ namespace SummerPractice
         private OleDbCommandBuilder commandBuilder;
         private string currentTableName;
         private readonly string connStr;
+
+        // FK-карта: ParentTable -> список FK-описаний (используется для проверки удаления/изменения)
         private Dictionary<string, List<ForeignKeyInfo>> foreignKeys = new Dictionary<string, List<ForeignKeyInfo>>();
 
         #region Свойства
@@ -53,10 +77,6 @@ namespace SummerPractice
 
         #region Загрузка таблиц
 
-        /// <summary>
-        /// Получает список пользовательских таблиц из БД.
-        /// </summary>
-        /// <param name="isAdmin">Если false — таблица "Пользователи" исключается.</param>
         public List<string> GetTableNames(bool isAdmin)
         {
             var list = new List<string>();
@@ -88,13 +108,11 @@ namespace SummerPractice
             currentTableName = tableName;
             string sql = $"SELECT * FROM [{tableName}]";
 
-            var conn = new OleDbConnection(connStr);
-            dataAdapter = new OleDbDataAdapter(sql, conn);
+            dataAdapter = new OleDbDataAdapter(sql, connStr);
             commandBuilder = new OleDbCommandBuilder(dataAdapter);
 
             var dt = new DataTable();
             dataAdapter.Fill(dt);
-
             originalTable = dt;
 
             IsFiltered = false;
@@ -122,9 +140,6 @@ namespace SummerPractice
             return dv;
         }
 
-        /// <param name="searchText">Текст для поиска.</param>
-        /// <param name="visibleColumnNames">Список имён видимых столбцов (поиск только по ним).</param>
-        // В классе ProjectDataManager
         public DataView PerformSearch(string searchText, string columnName)
         {
             if (originalTable == null)
@@ -135,7 +150,6 @@ namespace SummerPractice
             bool isNumber = decimal.TryParse(searchText, out decimal numValue);
             bool isDate = DateTime.TryParse(searchText, out DateTime dateValue);
 
-            // Определяем список столбцов для поиска
             IEnumerable<DataColumn> colsToSearch;
             if (columnName == "Все столбцы")
             {
@@ -143,7 +157,6 @@ namespace SummerPractice
             }
             else
             {
-                // Ищем только по выбранному столбцу
                 colsToSearch = originalTable.Columns.Cast<DataColumn>()
                     .Where(c => c.ColumnName == columnName);
             }
@@ -175,20 +188,9 @@ namespace SummerPractice
             return dv;
         }
 
-        public void ResetSort()
-        {
-            IsSorted = false;
-        }
-
-        public void ResetSearch()
-        {
-            IsSearched = false;
-        }
-
-        public void MarkFiltered()
-        {
-            IsFiltered = true;
-        }
+        public void ResetSort() => IsSorted = false;
+        public void ResetSearch() => IsSearched = false;
+        public void MarkFiltered() => IsFiltered = true;
 
         public void ResetAll()
         {
@@ -199,7 +201,7 @@ namespace SummerPractice
 
         #endregion
 
-        #region Внешние ключи
+        #region Внешние ключи (проверка целостности при удалении/изменении)
 
         public List<string> GetPrimaryKeyColumns()
         {
@@ -252,7 +254,6 @@ namespace SummerPractice
 
             decimal nextValue = hasValues ? maxValue + 1 : 1;
 
-            // возврат в нужном типе
             if (col.DataType == typeof(int)) return (int)nextValue;
             if (col.DataType == typeof(long)) return (long)nextValue;
             if (col.DataType == typeof(short)) return (short)nextValue;
@@ -329,7 +330,7 @@ namespace SummerPractice
                 {
                     using var conn = new OleDbConnection(connStr);
                     using var cmd = new OleDbCommand(checkSql, conn);
-                    cmd.Parameters.AddWithValue("?", pkValue); // <-- ИСПРАВЛЕНО
+                    cmd.Parameters.AddWithValue("?", pkValue);
                     conn.Open();
 
                     int count = Convert.ToInt32(cmd.ExecuteScalar());
@@ -351,6 +352,112 @@ namespace SummerPractice
 
         #endregion
 
+        #region Lookup (ComboBox-столбцы для FK в текущей таблице)
+
+        public List<LookupInfo> GetLookupsForCurrentTable()
+        {
+            var result = new List<LookupInfo>();
+
+            if (string.IsNullOrEmpty(currentTableName))
+                return result;
+
+            using var conn = new OleDbConnection(connStr);
+            conn.Open();
+
+            // Получаем все FK схемы, где текущая таблица — дочерняя (FK_TABLE_NAME)
+            var fkSchema = conn.GetOleDbSchemaTable(
+                OleDbSchemaGuid.Foreign_Keys,
+                new object[] { null, null, null, null, null, currentTableName });
+
+            if (fkSchema == null || fkSchema.Rows.Count == 0)
+                return result;
+
+            foreach (DataRow fkRow in fkSchema.Rows)
+            {
+                string parentTable = fkRow["PK_TABLE_NAME"]?.ToString();
+                string parentPkCol = fkRow["PK_COLUMN_NAME"]?.ToString();
+                string childFkCol = fkRow["FK_COLUMN_NAME"]?.ToString();
+
+                if (string.IsNullOrEmpty(parentTable) ||
+                    string.IsNullOrEmpty(parentPkCol) ||
+                    string.IsNullOrEmpty(childFkCol))
+                    continue;
+
+                // Определяем столбец отображения: первый не-PK столбец родительской таблицы
+                string displayCol = GetDisplayColumn(conn, parentTable, parentPkCol);
+                if (displayCol == null)
+                    continue; // нет подходящего столбца — пропускаем
+
+                // Загружаем данные справочника
+                DataTable lookupTable = LoadLookupTable(conn, parentTable, parentPkCol, displayCol);
+
+                result.Add(new LookupInfo
+                {
+                    FkColumn = childFkCol,
+                    ParentTable = parentTable,
+                    ParentPkColumn = parentPkCol,
+                    DisplayColumn = displayCol,
+                    LookupTable = lookupTable
+                });
+            }
+
+            return result;
+        }
+
+        private string GetDisplayColumn(OleDbConnection conn, string tableName, string pkColumnName)
+        {
+            try
+            {
+                // Читаем схему столбцов родительской таблицы
+                var colSchema = conn.GetOleDbSchemaTable(
+                    OleDbSchemaGuid.Columns,
+                    new object[] { null, null, tableName, null });
+
+                if (colSchema == null) return null;
+
+                // Собираем все столбцы в порядке ORDINAL_POSITION
+                var columns = colSchema.Rows.Cast<DataRow>()
+                    .OrderBy(r => Convert.ToInt32(r["ORDINAL_POSITION"]))
+                    .Select(r => r["COLUMN_NAME"]?.ToString())
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .ToList();
+
+                // Первый не-PK столбец — кандидат на отображение
+                string displayCol = columns.FirstOrDefault(
+                    c => !c.Equals(pkColumnName, StringComparison.OrdinalIgnoreCase));
+
+                return displayCol;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private DataTable LoadLookupTable(OleDbConnection conn, string tableName, string pkCol, string displayCol)
+        {
+            string sql = $"SELECT [{pkCol}], [{displayCol}] FROM [{tableName}] ORDER BY [{displayCol}]";
+
+            var dt = new DataTable();
+            using var cmd = new OleDbCommand(sql, conn);
+            using var da = new OleDbDataAdapter(cmd);
+            da.Fill(dt);
+
+            // Переименовываем столбцы для единообразия
+            dt.Columns[0].ColumnName = "ValueMember";
+            dt.Columns[1].ColumnName = "DisplayMember";
+
+            // Добавляем пустую строку (для NULL / необязательных FK)
+            DataRow emptyRow = dt.NewRow();
+            emptyRow["ValueMember"] = DBNull.Value;
+            emptyRow["DisplayMember"] = "";
+            dt.Rows.InsertAt(emptyRow, 0);
+
+            return dt;
+        }
+
+        #endregion
+
         #region Сохранение изменений
 
         public SaveResult TrySaveChanges()
@@ -362,7 +469,7 @@ namespace SummerPractice
             {
                 DataTable changes = originalTable.GetChanges();
                 if (changes == null)
-                    return new SaveResult { Success = true }; // Изменений нет
+                    return new SaveResult { Success = true };
 
                 foreach (DataRow row in changes.Rows)
                 {
@@ -384,7 +491,6 @@ namespace SummerPractice
                     }
                     else if (row.RowState == DataRowState.Modified)
                     {
-                        // Если изменилось поле, участвующее в связях, тоже проверяем FK
                         if (HasKeyOrForeignKeyChanged(row))
                         {
                             var violations = CheckForeignKeyViolations(row);
@@ -424,8 +530,6 @@ namespace SummerPractice
 
         private bool HasKeyOrForeignKeyChanged(DataRow row)
         {
-            // Проверяем, изменилось ли хоть одно поле, которое участвует в связях.
-            // Самый простой вариант — проверять все поля, но лучше хранить список ключевых колонок.
             foreach (DataColumn col in row.Table.Columns)
             {
                 if (!row.HasVersion(DataRowVersion.Original))
@@ -437,13 +541,9 @@ namespace SummerPractice
                 bool originalIsNull = (original == null || original == DBNull.Value);
                 bool currentIsNull = (current == null || current == DBNull.Value);
 
-                if (originalIsNull && currentIsNull)
-                    continue;
-                if (originalIsNull != currentIsNull)
-                    return true;
-
-                if (!object.Equals(original, current))
-                    return true;
+                if (originalIsNull && currentIsNull) continue;
+                if (originalIsNull != currentIsNull) return true;
+                if (!object.Equals(original, current)) return true;
             }
             return false;
         }
@@ -474,8 +574,9 @@ namespace SummerPractice
 
         private bool IsNumericType(Type type)
         {
-            return type == typeof(int) || type == typeof(long) || type == typeof(short) ||
-                   type == typeof(byte) || type == typeof(decimal) || type == typeof(double) ||
+            return type == typeof(int) || type == typeof(long) ||
+                   type == typeof(short) || type == typeof(byte) ||
+                   type == typeof(decimal) || type == typeof(double) ||
                    type == typeof(float);
         }
 

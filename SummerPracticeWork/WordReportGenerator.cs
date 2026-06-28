@@ -149,9 +149,23 @@ namespace SummerPractice
             {
                 if (wordVisible)
                 {
-                    wordTable = null;
-                    doc = null;
-                    wordApp = null;
+                    if (wordTable != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordTable);
+                        wordTable = null;
+                    }
+                    if (doc != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
+                        doc = null;
+                    }
+                    if (wordApp != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
+                        wordApp = null;
+                    }
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
                 }
                 else
                 {

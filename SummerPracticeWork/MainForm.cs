@@ -17,14 +17,9 @@ namespace SummerPractice
             InitializeComponent();
         }
 
-        // кнопка аутентификации
         private void btnInput_Click(object? sender, EventArgs e)
         {
-            // при первом запуске будет создаваться админ, если его нет
-            try
-            {
-                DatabaseManager.EnsureAdminCreated();
-            }
+            try { DatabaseManager.EnsureAdminCreated(); }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка инициализации БД: {ex.Message}", "Ошибка",
@@ -32,14 +27,13 @@ namespace SummerPractice
                 return;
             }
 
-            using (var loginForm = new Autentification())
-            {
-                if (loginForm.ShowDialog() != DialogResult.OK) return;
-            }
+            using var loginForm = new Autentification();
+            if (loginForm.ShowDialog() != DialogResult.OK) return;
 
-            var projectForm = new ProjectForm();
-            projectForm.FormClosed += (s, args) => Application.Exit();
-            projectForm.Show();
+            using var projectForm = new ProjectForm();
+            this.Hide();
+            projectForm.ShowDialog();
+            this.Show();
         }
 
         // кнопка регистрации

@@ -40,7 +40,6 @@ namespace SummerPractice
         private bool disposed = false;
 
         private readonly Dictionary<string, List<ForeignKeyInfo>> foreignKeys = new Dictionary<string, List<ForeignKeyInfo>>();
-        private static readonly object _globalLock = new object();
 
         #region Свойства
 
@@ -93,8 +92,6 @@ namespace SummerPractice
 
         public void SelectTable(string tableName)
         {
-            lock (_globalLock)
-            {
                 currentTableName = tableName;
                 string sql = $"SELECT * FROM [{tableName}]";
 
@@ -109,7 +106,6 @@ namespace SummerPractice
                 originalTable = dt;
 
                 ResetAll();
-            }
         }
 
         #endregion
@@ -356,8 +352,6 @@ namespace SummerPractice
             var result = new List<LookupInfo>();
             if (string.IsNullOrEmpty(currentTableName)) return result;
 
-            lock (_globalLock)
-            {
                 var fkSchema = SafeDatabaseHelper.GetSchemaTable(
                     connStr,
                     OleDbSchemaGuid.Foreign_Keys,
@@ -388,7 +382,6 @@ namespace SummerPractice
                         LookupTable = lookupTable
                     });
                 }
-            }
 
             return result;
         }
@@ -420,25 +413,33 @@ namespace SummerPractice
             {
                 if (dt != null && dt.Columns.Count >= 2)
                 {
+                    // Сбрасываем PrimaryKey — без этого InsertAt с DBNull
+                    // выбрасывает NoNullAllowedException и таблица остаётся пустой
+                    dt.PrimaryKey = Array.Empty<DataColumn>();
+
                     dt.Columns[0].ColumnName = "ValueMember";
                     dt.Columns[1].ColumnName = "DisplayMember";
                     dt.Columns["ValueMember"].AllowDBNull = true;
+                    dt.Columns["DisplayMember"].AllowDBNull = true;
 
                     DataRow emptyRow = dt.NewRow();
                     emptyRow["ValueMember"] = DBNull.Value;
-                    emptyRow["DisplayMember"] = "";
+                    emptyRow["DisplayMember"] = "— не выбрано —";
                     dt.Rows.InsertAt(emptyRow, 0);
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"LoadLookupTable structural error [{tableName}]: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine(
+                    $"LoadLookupTable structural error [{tableName}]: {ex.Message}");
+
                 if (dt == null || dt.Columns.Count == 0)
                 {
                     dt = new DataTable();
                     dt.Columns.Add("ValueMember", typeof(int));
                     dt.Columns.Add("DisplayMember", typeof(string));
                     dt.Columns["ValueMember"].AllowDBNull = true;
+                    dt.Columns["DisplayMember"].AllowDBNull = true;
                 }
             }
 
@@ -454,8 +455,6 @@ namespace SummerPractice
             if (dataAdapter == null || commandBuilder == null || originalTable == null)
                 return new SaveResult { Success = false, ErrorMessage = "Нет данных для сохранения." };
 
-            lock (_globalLock)
-            {
                 DataTable changes = originalTable.GetChanges();
                 if (changes == null)
                     return new SaveResult { Success = true };
@@ -507,7 +506,6 @@ namespace SummerPractice
                 {
                     return new SaveResult { Success = false, ErrorMessage = ex.Message };
                 }
-            }
         }
 
         private bool HasPrimaryKeyChanged(DataRow row)

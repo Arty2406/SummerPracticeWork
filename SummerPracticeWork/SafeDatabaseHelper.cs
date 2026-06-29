@@ -1,138 +1,136 @@
 ﻿using System;
 using System.Data;
 using System.Data.OleDb;
-using System.Runtime.ExceptionServices;
 using System.Threading;
 
 namespace SummerPractice
 {
+    /// <summary>
+    /// Все обращения к Microsoft.ACE.OLEDB идут через один статический лок.
+    /// ACE OLEDB — однопоточная COM-библиотека (STA), параллельные вызовы
+    /// приводят к AccessViolationException на уровне нативного кода.
+    /// </summary>
     public static class SafeDatabaseHelper
     {
-        private static readonly object _lock = new object();
-        private const int MaxRetries = 3;
-        private const int RetryDelayMs = 250;
+        // Единственный лок для всего приложения — ACE OLEDB не thread-safe
+        public static readonly object AceLock = new object();
 
-        public static DataTable ExecuteQuery(string connectionString, string sql, OleDbParameter[] parameters = null)
+        private const int MaxRetries = 3;
+        private const int RetryDelayMs = 300;
+
+        public static DataTable ExecuteQuery(
+            string connectionString, string sql, OleDbParameter[] parameters = null)
         {
+            Exception lastEx = null;
+
             for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
-                OleDbCommand cmd = null;
-                try
+                lock (AceLock)
                 {
-                    lock (_lock)
+                    try
                     {
                         using var conn = new OleDbConnection(connectionString);
                         conn.Open();
 
-                        cmd = new OleDbCommand(sql, conn);
-                        cmd.CommandTimeout = 60;
+                        using var cmd = new OleDbCommand(sql, conn);
+                        cmd.CommandTimeout = 30;
 
                         if (parameters != null)
-                        {
-                            // Клонируем параметры, чтобы у каждой попытки были свои чистые объекты в памяти
                             foreach (var p in parameters)
-                            {
-                                cmd.Parameters.Add(((ICloneable)p).Clone());
-                            }
-                        }
+                                cmd.Parameters.Add(new OleDbParameter(p.ParameterName, p.Value));
 
                         using var adapter = new OleDbDataAdapter(cmd);
                         var dt = new DataTable();
                         adapter.Fill(dt);
-
-                        // Явно очищаем параметры перед успешным выходом
-                        cmd.Parameters.Clear();
                         return dt;
                     }
+                    catch (AccessViolationException ex)
+                    {
+                        // ACE OLEDB повредил память — больше не повторяем
+                        System.Diagnostics.Debug.WriteLine($"[ACE] AccessViolation: {ex.Message}");
+                        return new DataTable();
+                    }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[ACE] Query attempt {attempt} failed: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Query Error on attempt {attempt}: {ex.Message}");
 
-                    // Безопасная очистка в случае сбоя
-                    try { cmd?.Parameters.Clear(); } catch { }
-
-                    if (attempt == MaxRetries)
-                        throw; // Пробрасываем дальше, если это не случайный сбой
-
+                if (attempt < MaxRetries)
                     Thread.Sleep(RetryDelayMs * attempt);
-                }
             }
 
-            return new DataTable();
+            throw lastEx ?? new Exception("ExecuteQuery failed after retries.");
         }
 
-        public static int ExecuteNonQuery(string connectionString, string sql, OleDbParameter[] parameters = null)
+        public static int ExecuteNonQuery(
+            string connectionString, string sql, OleDbParameter[] parameters = null)
         {
+            Exception lastEx = null;
+
             for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
-                OleDbCommand cmd = null;
-                try
+                lock (AceLock)
                 {
-                    lock (_lock)
+                    try
                     {
                         using var conn = new OleDbConnection(connectionString);
                         conn.Open();
 
-                        cmd = new OleDbCommand(sql, conn);
-                        cmd.CommandTimeout = 60;
+                        using var cmd = new OleDbCommand(sql, conn);
+                        cmd.CommandTimeout = 30;
 
                         if (parameters != null)
-                        {
                             foreach (var p in parameters)
-                            {
-                                cmd.Parameters.Add(((ICloneable)p).Clone());
-                            }
-                        }
+                                cmd.Parameters.Add(new OleDbParameter(p.ParameterName, p.Value));
 
-                        int result = cmd.ExecuteNonQuery();
-                        cmd.Parameters.Clear();
-                        return result;
+                        return cmd.ExecuteNonQuery();
+                    }
+                    catch (AccessViolationException ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ACE] AccessViolation: {ex.Message}");
+                        return 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[ACE] NonQuery attempt {attempt} failed: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"NonQuery Error on attempt {attempt}: {ex.Message}");
 
-                    try { cmd?.Parameters.Clear(); } catch { }
-
-                    if (attempt == MaxRetries)
-                        throw;
-
+                if (attempt < MaxRetries)
                     Thread.Sleep(RetryDelayMs * attempt);
-                }
             }
 
-            return 0;
+            throw lastEx ?? new Exception("ExecuteNonQuery failed after retries.");
         }
 
-        public static DataTable GetSchemaTable(string connectionString, Guid schemaGuid, object[] restrictions)
+        public static DataTable GetSchemaTable(
+            string connectionString, Guid schemaGuid, object[] restrictions)
         {
-            for (int attempt = 1; attempt <= MaxRetries; attempt++)
+            lock (AceLock)
             {
                 try
                 {
-                    lock (_lock)
-                    {
-                        using var conn = new OleDbConnection(connectionString);
-                        conn.Open();
-
-                        // Метод GetOleDbSchemaTable капризен к многопоточности, lock(_lock) здесь обязателен
-                        return conn.GetOleDbSchemaTable(schemaGuid, restrictions);
-                    }
+                    using var conn = new OleDbConnection(connectionString);
+                    conn.Open();
+                    return conn.GetOleDbSchemaTable(schemaGuid, restrictions)
+                           ?? new DataTable();
+                }
+                catch (AccessViolationException ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ACE] Schema AccessViolation: {ex.Message}");
+                    return new DataTable();
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Schema Error on attempt {attempt}: {ex.Message}");
-
-                    if (attempt == MaxRetries)
-                        return new DataTable();
-
-                    Thread.Sleep(RetryDelayMs * attempt);
+                    System.Diagnostics.Debug.WriteLine($"[ACE] Schema error: {ex.Message}");
+                    return new DataTable();
                 }
             }
-
-            return new DataTable();
         }
     }
 }

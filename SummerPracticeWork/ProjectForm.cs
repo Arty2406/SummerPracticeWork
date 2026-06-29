@@ -13,10 +13,8 @@ namespace SummerPractice
         private ProjectDataManager dataManager;
         private bool isAdminMode = false;
         private List<string> primaryKeyColumns = new List<string>();
-
-        // Хранит текущие lookup-описания для активной таблицы
-        // (FK-столбец - описание справочника)
         private List<LookupInfo> currentLookups = new List<LookupInfo>();
+        private bool _isShowingValidationError = false;
 
         public ProjectForm()
         {
@@ -43,9 +41,6 @@ namespace SummerPractice
             dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
             dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
             dataGridViewMain.DataError += DataGridViewMain_DataError;
-            dataGridViewMain.DataError += dataGridViewMain_DataError;
-
-            this.Load += ProjectForm_Load;
         }
 
         private void ProjectForm_Load(object sender, EventArgs e)
@@ -56,8 +51,7 @@ namespace SummerPractice
 
                 if (tableNames.Count == 0)
                 {
-                    MessageBox.Show(
-                        "В базе данных нет доступных вам таблиц.", "Внимание",
+                    MessageBox.Show("В базе данных нет доступных вам таблиц.", "Внимание",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
@@ -84,32 +78,35 @@ namespace SummerPractice
             try
             {
                 if (dataGridViewMain != null && dataGridViewMain.IsCurrentCellInEditMode)
-                {
                     dataGridViewMain.EndEdit();
-                }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Ошибка при завершении редактирования ячейки: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"SafeEndEdit error: {ex.Message}");
             }
         }
 
         private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
+            e.ThrowException = false;
+            e.Cancel = true;
+
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn)
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"ComboBox DataError col={dataGridViewMain.Columns[e.ColumnIndex].Name} " +
                     $"row={e.RowIndex} ctx={e.Context}: {e.Exception?.Message}");
-                e.ThrowException = false;
-                e.Cancel = true;
                 return;
             }
+
+            if (e.Context.HasFlag(DataGridViewDataErrorContexts.Parsing) ||
+                e.Context.HasFlag(DataGridViewDataErrorContexts.Commit) ||
+                e.Context.HasFlag(DataGridViewDataErrorContexts.LeaveControl))
+                return;
 
             if (e.Exception != null)
                 MessageBox.Show($"Ошибка данных: {e.Exception.Message}", "Ошибка",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            e.Cancel = true;
         }
 
         private void ComboBoxTables_SelectedIndexChanged(object sender, EventArgs e)
@@ -148,14 +145,13 @@ namespace SummerPractice
 
                 dataManager.SelectTable(tableName);
                 primaryKeyColumns = dataManager.GetPrimaryKeyColumns();
-
                 currentLookups = dataManager.GetLookupsForCurrentTable();
 
                 dataGridViewMain.DataSource = null;
                 dataGridViewMain.Columns.Clear();
                 dataGridViewMain.Refresh();
 
-                SetupAllColumns(dataManager.OriginalTable, dataManager.GetPrimaryKeyColumns(), currentLookups);
+                SetupAllColumns(dataManager.OriginalTable, primaryKeyColumns, currentLookups);
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
@@ -167,14 +163,16 @@ namespace SummerPractice
                     if (dataGridViewMain.Columns.Contains(pkCol))
                     {
                         dataGridViewMain.Columns[pkCol].ReadOnly = true;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor = System.Drawing.Color.Gray;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.LightGray;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
+                            System.Drawing.Color.Gray;
                     }
                 }
 
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
                 {
-                    if (col is DataGridViewComboBoxColumn) continue; // ComboBox дату не форматируем
+                    if (col is DataGridViewComboBoxColumn) continue;
                     if (col.ValueType == typeof(DateTime))
                         col.DefaultCellStyle.Format = "dd.MM.yyyy";
                 }
@@ -213,12 +211,8 @@ namespace SummerPractice
                         FlatStyle = FlatStyle.Flat,
                         ToolTipText = $"Справочник: {lookup.ParentTable} → {lookup.DisplayColumn}"
                     };
-
-                    // ВАЖНО: ValueType должен совпадать с типом FK-колонки в основной таблице
-                    // Иначе DataGridView не может сопоставить значения при биндинге
                     comboCol.ValueType = dc.DataType;
                     comboCol.DefaultCellStyle.NullValue = DBNull.Value;
-
                     col = comboCol;
                 }
                 else if (dc.DataType == typeof(DateTime))
@@ -272,20 +266,8 @@ namespace SummerPractice
             foreach (DataGridViewColumn col in dataGridViewMain.Columns)
             {
                 if (col is DataGridViewComboBoxColumn)
-                {
-                    if (primaryKeyColumns.Contains(col.Name))
-                        col.ReadOnly = true;
-                    else
-                        col.ReadOnly = readOnly;
-                }
+                    col.ReadOnly = primaryKeyColumns.Contains(col.Name) ? true : readOnly;
             }
-        }
-
-        private void dataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
-        {
-            System.Diagnostics.Debug.WriteLine($"[Grid DataError] Строка: {e.RowIndex}, Колонка: {e.ColumnIndex}");
-            e.ThrowException = false;
-            e.Cancel = false;
         }
 
         private void btnExitToMain_Click(object sender, EventArgs e)
@@ -297,7 +279,7 @@ namespace SummerPractice
             if (result == DialogResult.Yes)
             {
                 CurrentUser.Logout();
-                this.Hide();
+                this.Close();
             }
         }
 
@@ -307,44 +289,31 @@ namespace SummerPractice
         {
             if (!IsAdmin())
             {
-                MessageBox.Show("Эта функция доступна только администратору.\n\nВойдите в систему под учётной записью администратора.",
+                MessageBox.Show(
+                    "Эта функция доступна только администратору.\n\nВойдите под учётной записью администратора.",
                     "Доступ запрещён", MessageBoxButtons.OK, MessageBoxIcon.Stop);
                 return;
             }
 
-            if (isAdminMode)
-            {
-                ExitEditMode();
-                return;
-            }
+            if (isAdminMode) { ExitEditMode(); return; }
 
-            if (dataManager == null || dataManager.OriginalTable == null)
+            if (dataManager?.OriginalTable == null)
             {
-                MessageBox.Show("Невозможно включить режим редактирования: данные таблицы не загружены или отсутствуют.",
-                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Данные таблицы не загружены.", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
             try
             {
-                dataGridViewMain.SuspendLayout();
-
                 SafeEndEdit();
-
                 ResetAllViewStates();
-
                 dataManager.ResetAll();
                 dataManager.LoadForeignKeys();
 
                 currentLookups = dataManager.GetLookupsForCurrentTable();
 
                 dataGridViewMain.DataSource = null;
-                dataGridViewMain.DataBindings.Clear();
-                if (dataGridViewMain.BindingContext != null && dataManager.OriginalTable != null)
-                {
-                    try { dataGridViewMain.BindingContext[dataManager.OriginalTable]?.EndCurrentEdit(); } catch { }
-                }
-
                 dataGridViewMain.Columns.Clear();
 
                 if (dataManager.OriginalTable != null)
@@ -353,10 +322,9 @@ namespace SummerPractice
                     dataManager.OriginalTable.DefaultView.Sort = "";
                 }
 
-                var pkCols = primaryKeyColumns ?? new List<string>();
-                var lookups = currentLookups ?? new List<LookupInfo>();
-
-                SetupAllColumns(dataManager.OriginalTable, pkCols, lookups);
+                SetupAllColumns(dataManager.OriginalTable,
+                    primaryKeyColumns ?? new List<string>(),
+                    currentLookups ?? new List<LookupInfo>());
 
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
 
@@ -367,24 +335,21 @@ namespace SummerPractice
 
                 UpdateComboBoxColumnsReadOnly(readOnly: false);
 
-                if (primaryKeyColumns != null)
+                foreach (string pkCol in primaryKeyColumns)
                 {
-                    foreach (string pkCol in primaryKeyColumns)
+                    if (dataGridViewMain.Columns.Contains(pkCol))
                     {
-                        if (!string.IsNullOrEmpty(pkCol) && dataGridViewMain.Columns.Contains(pkCol))
-                        {
-                            dataGridViewMain.Columns[pkCol].ReadOnly = true;
-                            dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
-                            dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor = System.Drawing.Color.Gray;
-                        }
+                        dataGridViewMain.Columns[pkCol].ReadOnly = true;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.LightGray;
+                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
+                            System.Drawing.Color.Gray;
                     }
                 }
 
                 btnChange.Text = "Завершить редактирование";
                 btnChange.BackColor = System.Drawing.Color.OrangeRed;
                 btnChange.ForeColor = System.Drawing.Color.White;
-
-                dataGridViewMain.ResumeLayout(true);
 
                 MessageBox.Show(
                     "Режим редактирования включён.\n\n" +
@@ -398,10 +363,9 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                dataGridViewMain.ResumeLayout(true);
-
-                MessageBox.Show($"Критическая ошибка при переключении в режим редактирования:\n{ex.Message}\n\nСтек вызовов:\n{ex.StackTrace}",
-                    "Ошибка интерфейса", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(
+                    $"Ошибка при переключении в режим редактирования:\n{ex.Message}",
+                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -474,7 +438,8 @@ namespace SummerPractice
                     return;
                 }
 
-                if (!int.TryParse(txtFrom.Text, out int fromRow) || !int.TryParse(txtTo.Text, out int toRow))
+                if (!int.TryParse(txtFrom.Text, out int fromRow) ||
+                    !int.TryParse(txtTo.Text, out int toRow))
                 {
                     MessageBox.Show("Введите корректные номера строк (числа).", "Внимание",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -525,11 +490,29 @@ namespace SummerPractice
             foreach (DataColumn col in dataManager.OriginalTable.Columns)
                 checkedListBox.Items.Add(col.ColumnName, true);
 
-            var btnSelectAll = new Button { Text = "Выбрать все", Location = new System.Drawing.Point(15, 255), Size = new System.Drawing.Size(130, 30) };
-            btnSelectAll.Click += (s, ev) => { for (int i = 0; i < checkedListBox.Items.Count; i++) checkedListBox.SetItemChecked(i, true); };
+            var btnSelectAll = new Button
+            {
+                Text = "Выбрать все",
+                Location = new System.Drawing.Point(15, 255),
+                Size = new System.Drawing.Size(130, 30)
+            };
+            btnSelectAll.Click += (s, ev) =>
+            {
+                for (int i = 0; i < checkedListBox.Items.Count; i++)
+                    checkedListBox.SetItemChecked(i, true);
+            };
 
-            var btnDeselectAll = new Button { Text = "Снять все", Location = new System.Drawing.Point(155, 255), Size = new System.Drawing.Size(130, 30) };
-            btnDeselectAll.Click += (s, ev) => { for (int i = 0; i < checkedListBox.Items.Count; i++) checkedListBox.SetItemChecked(i, false); };
+            var btnDeselectAll = new Button
+            {
+                Text = "Снять все",
+                Location = new System.Drawing.Point(155, 255),
+                Size = new System.Drawing.Size(130, 30)
+            };
+            btnDeselectAll.Click += (s, ev) =>
+            {
+                for (int i = 0; i < checkedListBox.Items.Count; i++)
+                    checkedListBox.SetItemChecked(i, false);
+            };
 
             grpColumns.Controls.AddRange(new Control[] { checkedListBox, btnSelectAll, btnDeselectAll });
 
@@ -544,19 +527,41 @@ namespace SummerPractice
             var txtFrom = new TextBox { Name = "txtFrom", Text = "1", Location = new System.Drawing.Point(40, 27), Width = 70 };
             var lblTo = new Label { Text = "По:", Location = new System.Drawing.Point(120, 30), AutoSize = true };
             var txtTo = new TextBox { Name = "txtTo", Text = dataManager.OriginalTable.Rows.Count.ToString(), Location = new System.Drawing.Point(160, 27), Width = 70 };
-            var lblInfo = new Label { Text = $"Всего строк: {dataManager.OriginalTable.Rows.Count}", Location = new System.Drawing.Point(260, 30), AutoSize = true, ForeColor = System.Drawing.Color.Gray };
+            var lblInfo = new Label
+            {
+                Text = $"Всего строк: {dataManager.OriginalTable.Rows.Count}",
+                Location = new System.Drawing.Point(260, 30),
+                AutoSize = true,
+                ForeColor = System.Drawing.Color.Gray
+            };
 
             grpRows.Controls.AddRange(new Control[] { lblFrom, txtFrom, lblTo, txtTo, lblInfo });
 
-            var btnApply = new Button { Text = "Применить", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(70, 420), Size = new System.Drawing.Size(100, 35) };
-            var btnReset = new Button { Text = "Сбросить фильтр", Location = new System.Drawing.Point(190, 420), Size = new System.Drawing.Size(120, 35) };
+            var btnApply = new Button
+            {
+                Text = "Применить",
+                DialogResult = DialogResult.OK,
+                Location = new System.Drawing.Point(70, 420),
+                Size = new System.Drawing.Size(100, 35)
+            };
+            var btnReset = new Button
+            {
+                Text = "Сбросить фильтр",
+                Location = new System.Drawing.Point(190, 420),
+                Size = new System.Drawing.Size(120, 35)
+            };
             btnReset.Click += (s, ev) => { ResetFilter(); dialog.Close(); };
-            var btnCancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(320, 420), Size = new System.Drawing.Size(100, 35) };
+            var btnCancel = new Button
+            {
+                Text = "Отмена",
+                DialogResult = DialogResult.Cancel,
+                Location = new System.Drawing.Point(320, 420),
+                Size = new System.Drawing.Size(100, 35)
+            };
 
             dialog.Controls.AddRange(new Control[] { grpColumns, grpRows, btnApply, btnReset, btnCancel });
             dialog.AcceptButton = btnApply;
             dialog.CancelButton = btnCancel;
-
             return dialog;
         }
 
@@ -584,11 +589,9 @@ namespace SummerPractice
                 int visibleCount = 0;
                 for (int i = 0; i < dataGridViewMain.Rows.Count; i++)
                 {
-                    DataGridViewRow row = dataGridViewMain.Rows[i];
+                    var row = dataGridViewMain.Rows[i];
                     if (row.IsNewRow) continue;
-
-                    int rowNumber = i + 1;
-                    bool isVisible = (rowNumber >= fromRow && rowNumber <= toRow);
+                    bool isVisible = (i + 1 >= fromRow && i + 1 <= toRow);
                     try { row.Visible = isVisible; } catch { }
                     if (isVisible) visibleCount++;
                 }
@@ -596,7 +599,7 @@ namespace SummerPractice
                 dataManager.MarkFiltered();
 
                 MessageBox.Show(
-                    $"Применён фильтр:\n• Столбцов отображается: {selectedColumns.Count}\n• Строк отображается: {visibleCount} (с {fromRow} по {toRow})",
+                    $"Применён фильтр:\n• Столбцов: {selectedColumns.Count}\n• Строк: {visibleCount} (с {fromRow} по {toRow})",
                     "Фильтр применён", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -628,16 +631,9 @@ namespace SummerPractice
 
         private void btnSort_Click(object sender, EventArgs e)
         {
-            if (dataGridViewMain.DataSource == null)
+            if (dataGridViewMain.DataSource == null || dataManager.OriginalTable == null)
             {
                 MessageBox.Show("Сначала выберите таблицу.", "Внимание",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (dataManager.OriginalTable == null)
-            {
-                MessageBox.Show("Нет данных для сортировки.", "Внимание",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -666,8 +662,8 @@ namespace SummerPractice
                     DataView dv = dataManager.ApplySort(columnName, ascending);
                     dataGridViewMain.DataSource = dv;
 
-                    string directionText = ascending ? "по возрастанию" : "по убыванию";
-                    MessageBox.Show($"Таблица отсортирована по столбцу '{columnName}' {directionText}.",
+                    string dir = ascending ? "по возрастанию" : "по убыванию";
+                    MessageBox.Show($"Таблица отсортирована по столбцу '{columnName}' {dir}.",
                         "Сортировка применена", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
@@ -710,11 +706,11 @@ namespace SummerPractice
                 Text = "Тип данных: (не выбрано)",
                 Location = new System.Drawing.Point(15, 70),
                 AutoSize = true,
-                Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Bold),
+                Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F,
+                                System.Drawing.FontStyle.Bold),
                 ForeColor = System.Drawing.Color.DarkBlue
             };
 
-            // Добавляем только столбцы, которые есть в DataTable (для ComboBox берём реальное имя поля)
             foreach (DataGridViewColumn dgvCol in dataGridViewMain.Columns)
             {
                 if (dgvCol.Visible && dataManager.OriginalTable.Columns.Contains(dgvCol.Name))
@@ -731,8 +727,8 @@ namespace SummerPractice
                 Size = new System.Drawing.Size(415, 100)
             };
 
-            var rbAscending = new RadioButton { Name = "rbAscending", Text = "По возрастанию (А→Я, 0→9, старые→новые)", Location = new System.Drawing.Point(15, 30), AutoSize = true, Checked = true };
-            var rbDescending = new RadioButton { Text = "По убыванию (Я→А, 9→0, новые→старые)", Location = new System.Drawing.Point(15, 60), AutoSize = true };
+            var rbAscending = new RadioButton { Name = "rbAscending", Text = "По возрастанию (А→Я, 0→9)", Location = new System.Drawing.Point(15, 30), AutoSize = true, Checked = true };
+            var rbDescending = new RadioButton { Text = "По убыванию (Я→А, 9→0)", Location = new System.Drawing.Point(15, 60), AutoSize = true };
 
             grpSortType.Controls.AddRange(new Control[] { rbAscending, rbDescending });
 
@@ -751,9 +747,8 @@ namespace SummerPractice
                 string colName = cmbColumn.SelectedItem.ToString();
                 if (dataManager.OriginalTable.Columns.Contains(colName))
                 {
-                    DataColumn col = dataManager.OriginalTable.Columns[colName];
-                    Type actualType = GetActualColumnType(col);
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(actualType)}";
+                    var col = dataManager.OriginalTable.Columns[colName];
+                    lblType.Text = $"Тип данных: {GetDataTypeDescription(GetActualColumnType(col))}";
                 }
             };
 
@@ -762,9 +757,8 @@ namespace SummerPractice
                 string colName = cmbColumn.SelectedItem.ToString();
                 if (dataManager.OriginalTable.Columns.Contains(colName))
                 {
-                    DataColumn col = dataManager.OriginalTable.Columns[colName];
-                    Type actualType = GetActualColumnType(col);
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(actualType)}";
+                    var col = dataManager.OriginalTable.Columns[colName];
+                    lblType.Text = $"Тип данных: {GetDataTypeDescription(GetActualColumnType(col))}";
                 }
             }
 
@@ -775,8 +769,7 @@ namespace SummerPractice
         {
             try
             {
-                if (dataGridViewMain.DataSource is DataView dv)
-                    dv.Sort = "";
+                if (dataGridViewMain.DataSource is DataView dv) dv.Sort = "";
                 dataManager.ResetSort();
             }
             catch (Exception ex)
@@ -823,13 +816,12 @@ namespace SummerPractice
 
                     if (dv == null)
                     {
-                        MessageBox.Show("Поиск не дал результатов или выбранный столбец не подходит для поиска.", "Внимание",
+                        MessageBox.Show("Поиск не дал результатов.", "Внимание",
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
                     dataGridViewMain.DataSource = dv;
-
                     MessageBox.Show($"Найдено записей: {dv.Count}", "Результаты поиска",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -855,9 +847,14 @@ namespace SummerPractice
 
             var lblSearch = new Label { Text = "Введите текст или число:", Location = new System.Drawing.Point(15, 15), AutoSize = true };
             var txtSearch = new TextBox { Name = "txtSearch", Location = new System.Drawing.Point(15, 40), Width = 350 };
-
             var lblCol = new Label { Text = "Искать в:", Location = new System.Drawing.Point(15, 75), AutoSize = true };
-            var cmbColumn = new ComboBox { Name = "cmbColumn", Location = new System.Drawing.Point(15, 95), Width = 350, DropDownStyle = ComboBoxStyle.DropDownList };
+            var cmbColumn = new ComboBox
+            {
+                Name = "cmbColumn",
+                Location = new System.Drawing.Point(15, 95),
+                Width = 350,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
 
             cmbColumn.Items.Add("Все столбцы");
             foreach (DataGridViewColumn col in dataGridViewMain.Columns)
@@ -875,7 +872,6 @@ namespace SummerPractice
             dialog.Controls.AddRange(new Control[] { lblSearch, txtSearch, lblCol, cmbColumn, btnOk, btnReset, btnCancel });
             dialog.AcceptButton = btnOk;
             dialog.CancelButton = btnCancel;
-
             return dialog;
         }
 
@@ -883,8 +879,7 @@ namespace SummerPractice
         {
             try
             {
-                if (dataGridViewMain.DataSource is DataView dv)
-                    dv.RowFilter = "";
+                if (dataGridViewMain.DataSource is DataView dv) dv.RowFilter = "";
                 dataManager.ResetSearch();
             }
             catch (Exception ex)
@@ -903,33 +898,19 @@ namespace SummerPractice
             try
             {
                 SafeEndEdit();
-
                 if (dataGridViewMain == null) return;
 
-                if (dataManager != null && dataManager.OriginalTable != null)
-                {
-                    if (dataGridViewMain.DataSource is DataView)
-                    {
-                        if (dataGridViewMain.DataSource is DataView dv)
-                        {
-                            dv.RowFilter = "";
-                        }
-                    }
-                    else
-                    {
-                        dataGridViewMain.DataSource = dataManager.OriginalTable;
-                    }
-                }
+                if (dataGridViewMain.DataSource is DataView dv)
+                    dv.RowFilter = "";
+                else if (dataManager?.OriginalTable != null)
+                    dataGridViewMain.DataSource = dataManager.OriginalTable;
 
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-                {
                     try { col.Visible = true; } catch { }
-                }
-
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка сброса состояния интерфейса:\n{ex.Message}", "Ошибка",
+                MessageBox.Show($"Ошибка сброса: {ex.Message}", "Ошибка",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -947,7 +928,17 @@ namespace SummerPractice
                 return;
             }
 
-            TrySaveChanges();
+            if (TrySaveChanges())
+            {
+                isAdminMode = false;
+                dataGridViewMain.ReadOnly = true;
+                dataGridViewMain.AllowUserToAddRows = false;
+                dataGridViewMain.AllowUserToDeleteRows = false;
+                UpdateComboBoxColumnsReadOnly(readOnly: true);
+                btnChange.Text = "Изменить";
+                btnChange.BackColor = System.Drawing.SystemColors.Control;
+                btnChange.ForeColor = System.Drawing.SystemColors.ControlText;
+            }
         }
 
         private bool TrySaveChanges()
@@ -991,19 +982,15 @@ namespace SummerPractice
             var result = WordReportGenerator.CreateReport(dataGridViewMain, tableName, userName);
 
             if (result.Success)
-            {
                 MessageBox.Show($"Отчёт успешно создан!\n\nФайл сохранён:\n{result.FilePath}",
                     "Отчёт готов", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
             else
-            {
                 MessageBox.Show(result.ErrorMessage, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
         }
 
         #endregion
 
-        #region Валидация и удаление (UI-логика)
+        #region Валидация и удаление
 
         private void DataGridViewMain_DefaultValuesNeeded(object sender, DataGridViewRowEventArgs e)
         {
@@ -1013,80 +1000,63 @@ namespace SummerPractice
             {
                 foreach (string pkCol in primaryKeyColumns)
                 {
-                    if (string.IsNullOrEmpty(pkCol)) continue;
+                    if (string.IsNullOrEmpty(pkCol) || !dataGridViewMain.Columns.Contains(pkCol))
+                        continue;
 
-                    if (dataGridViewMain.Columns.Contains(pkCol))
-                    {
-                        object nextValue = dataManager.GetNextPrimaryKeyValue(pkCol);
-
-                        if (e.Row.Cells[pkCol] != null)
-                        {
-                            e.Row.Cells[pkCol].Value = nextValue;
-                        }
-                    }
+                    object nextValue = dataManager.GetNextPrimaryKeyValue(pkCol);
+                    if (e.Row.Cells[pkCol] != null)
+                        e.Row.Cells[pkCol].Value = nextValue;
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при генерации ключевых значений для новой строки:\n{ex.Message}",
-                    "Ошибка редактирования", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                System.Diagnostics.Debug.WriteLine($"DefaultValuesNeeded error: {ex.Message}");
             }
         }
-
-        private bool _isShowingValidationError = false;
 
         private void DataGridViewMain_CellValidating(object sender, DataGridViewCellValidatingEventArgs e)
         {
             if (!isAdminMode || e.RowIndex < 0 || e.RowIndex >= dataGridViewMain.Rows.Count) return;
-
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn) return;
-
             if (_isShowingValidationError) return;
 
             try
             {
-                DataGridViewRow row = dataGridViewMain.Rows[e.RowIndex];
-
+                var row = dataGridViewMain.Rows[e.RowIndex];
                 if (!(row.DataBoundItem is DataRowView drv)) return;
 
                 object newValue = e.FormattedValue;
-                string columnName = dataGridViewMain.Columns[e.ColumnIndex].Name;
+                string colName = dataGridViewMain.Columns[e.ColumnIndex].Name;
 
                 if (newValue == null || string.IsNullOrWhiteSpace(newValue.ToString()))
                 {
                     bool hasOtherValues = false;
-
                     foreach (DataColumn col in drv.Row.Table.Columns)
                     {
-                        if (col.ColumnName == columnName) continue;
-
-                        object cellData = drv.Row[col.ColumnName];
-                        if (cellData != null && cellData != DBNull.Value && !string.IsNullOrWhiteSpace(cellData.ToString()))
+                        if (col.ColumnName == colName) continue;
+                        object v = drv.Row[col.ColumnName];
+                        if (v != null && v != DBNull.Value && !string.IsNullOrWhiteSpace(v.ToString()))
                         {
                             hasOtherValues = true;
                             break;
                         }
                     }
 
-                    object originalValue = drv.Row[columnName];
-                    bool wasFilled = originalValue != null && originalValue != DBNull.Value && !string.IsNullOrWhiteSpace(originalValue.ToString());
+                    object origVal = drv.Row[colName];
+                    bool wasFilled = origVal != null && origVal != DBNull.Value &&
+                                      !string.IsNullOrWhiteSpace(origVal.ToString());
 
                     if (hasOtherValues || wasFilled)
                     {
                         e.Cancel = true;
-                        string colHeaderText = dataGridViewMain.Columns[e.ColumnIndex].HeaderText;
-                        row.Cells[e.ColumnIndex].ErrorText = $"Поле «{colHeaderText}» не может быть пустым.";
+                        string header = dataGridViewMain.Columns[e.ColumnIndex].HeaderText;
+                        row.Cells[e.ColumnIndex].ErrorText = $"Поле «{header}» не может быть пустым.";
 
                         _isShowingValidationError = true;
-
                         MessageBox.Show(
-                            $"Нельзя оставить поле «{colHeaderText}» пустым.\n\n" +
-                            "Строка содержит данные — либо заполните поле, либо удалите всю строку целиком (кнопкой Delete).",
-                            "Ошибка ввода",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Warning
-                        );
-
+                            $"Нельзя оставить поле «{header}» пустым.\n\n" +
+                            "Строка содержит данные — либо заполните поле, либо удалите строку целиком.",
+                            "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         _isShowingValidationError = false;
                     }
                 }
@@ -1098,8 +1068,7 @@ namespace SummerPractice
             catch (Exception ex)
             {
                 _isShowingValidationError = false;
-
-                System.Diagnostics.Debug.WriteLine($"Ошибка валидации: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"CellValidating error: {ex.Message}");
             }
         }
 
@@ -1113,21 +1082,22 @@ namespace SummerPractice
                 if (row == null || row.RowState == DataRowState.Deleted) return;
 
                 var violations = dataManager.CheckForeignKeyViolations(row);
-
                 if (violations.Count > 0)
                 {
                     e.Cancel = true;
-                    MessageBox.Show("Нельзя удалить строку — существуют связанные данные:\n\n" + string.Join("\n", violations) +
+                    MessageBox.Show(
+                        "Нельзя удалить строку — существуют связанные данные:\n\n" +
+                        string.Join("\n", violations) +
                         "\n\nСначала удалите связанные записи из дочерних таблиц.",
                         "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                var result = MessageBox.Show("Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
+                var result = MessageBox.Show(
+                    "Удалить выбранную строку?\nЭто действие нельзя отменить после сохранения.",
                     "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
-                if (result == DialogResult.No)
-                    e.Cancel = true;
+                if (result == DialogResult.No) e.Cancel = true;
             }
             catch (Exception ex)
             {
@@ -1151,14 +1121,17 @@ namespace SummerPractice
                 var violations = dataManager.CheckForeignKeyViolations(row);
                 if (violations.Count > 0)
                 {
-                    MessageBox.Show("Нельзя удалить выбранные строки — есть связанные данные:\n\n" + string.Join("\n", violations) +
+                    MessageBox.Show(
+                        "Нельзя удалить выбранные строки — есть связанные данные:\n\n" +
+                        string.Join("\n", violations) +
                         "\n\nСначала удалите связанные записи из дочерних таблиц.",
                         "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
             }
 
-            var result = MessageBox.Show($"Удалить выбранные строки ({dataGridViewMain.SelectedRows.Count})?",
+            var result = MessageBox.Show(
+                $"Удалить выбранные строки ({dataGridViewMain.SelectedRows.Count})?",
                 "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
@@ -1175,8 +1148,7 @@ namespace SummerPractice
 
         private DataRow GetCurrentDataRow(DataGridViewRow dgvRow)
         {
-            if (dgvRow.DataBoundItem is DataRowView drv)
-                return drv.Row;
+            if (dgvRow.DataBoundItem is DataRowView drv) return drv.Row;
             return null;
         }
 
@@ -1187,7 +1159,7 @@ namespace SummerPractice
         private Type GetActualColumnType(DataColumn col)
         {
             if (col == null) return typeof(string);
-            if (dataManager == null || dataManager.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
+            if (dataManager?.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
                 return col.DataType;
 
             try
@@ -1199,24 +1171,21 @@ namespace SummerPractice
 
                 for (int i = 0; i < checkRows; i++)
                 {
-                    if (i >= dataManager.OriginalTable.Rows.Count) break;
-
                     object value = dataManager.OriginalTable.Rows[i][col];
-
-                    if (value == null || value == DBNull.Value || string.IsNullOrWhiteSpace(value.ToString()))
-                        continue;
+                    if (value == null || value == DBNull.Value ||
+                        string.IsNullOrWhiteSpace(value.ToString())) continue;
 
                     nonEmptyCount++;
-                    string strValue = value.ToString().Trim();
+                    string s = value.ToString().Trim();
 
-                    if (allNumbers && !decimal.TryParse(strValue, System.Globalization.NumberStyles.Any, null, out _))
+                    if (allNumbers && !decimal.TryParse(s,
+                            System.Globalization.NumberStyles.Any, null, out _))
                         allNumbers = false;
 
-                    if (allDates && !DateTime.TryParse(strValue, out _))
+                    if (allDates && !DateTime.TryParse(s, out _))
                         allDates = false;
 
-                    if (!allNumbers && !allDates)
-                        break;
+                    if (!allNumbers && !allDates) break;
                 }
 
                 if (allNumbers && nonEmptyCount > 0) return typeof(decimal);
@@ -1224,7 +1193,7 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Ошибка анализа типа колонки: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"GetActualColumnType error: {ex.Message}");
             }
 
             return col.DataType;
@@ -1239,13 +1208,10 @@ namespace SummerPractice
             return type.Name;
         }
 
-        private bool IsNumericType(Type type)
-        {
-            return type == typeof(int) || type == typeof(long) ||
-                   type == typeof(short) || type == typeof(byte) ||
-                   type == typeof(decimal) || type == typeof(double) ||
-                   type == typeof(float);
-        }
+        private bool IsNumericType(Type type) =>
+            type == typeof(int) || type == typeof(long) || type == typeof(short) ||
+            type == typeof(byte) || type == typeof(decimal) || type == typeof(double) ||
+            type == typeof(float);
 
         #endregion
     }

@@ -12,9 +12,7 @@ namespace SummerPractice
         protected override void Dispose(bool disposing)
         {
             if (disposing && (components != null))
-            {
                 components.Dispose();
-            }
             base.Dispose(disposing);
         }
 
@@ -34,9 +32,8 @@ namespace SummerPractice
             ((ISupportInitialize)dataGridViewMain).BeginInit();
             groupBoxElemProject.SuspendLayout();
             SuspendLayout();
-            // 
+
             // btnExitToMain
-            // 
             btnExitToMain.Anchor = AnchorStyles.Right;
             btnExitToMain.Location = new Point(18, 244);
             btnExitToMain.Margin = new Padding(3, 2, 3, 2);
@@ -46,9 +43,8 @@ namespace SummerPractice
             btnExitToMain.Text = "Выйти в главное меню";
             btnExitToMain.UseVisualStyleBackColor = true;
             btnExitToMain.Click += btnExitToMain_Click;
-            // 
+
             // comboBoxTables
-            // 
             comboBoxTables.Anchor = AnchorStyles.Right;
             comboBoxTables.DropDownStyle = ComboBoxStyle.DropDownList;
             comboBoxTables.FormattingEnabled = true;
@@ -58,9 +54,8 @@ namespace SummerPractice
             comboBoxTables.Size = new Size(164, 23);
             comboBoxTables.TabIndex = 2;
             comboBoxTables.SelectedIndexChanged += ComboBoxTables_SelectedIndexChanged;
-            // 
+
             // btnFilter
-            // 
             btnFilter.Anchor = AnchorStyles.Right;
             btnFilter.Location = new Point(18, 117);
             btnFilter.Margin = new Padding(3, 2, 3, 2);
@@ -70,9 +65,8 @@ namespace SummerPractice
             btnFilter.Text = "Фильтр";
             btnFilter.UseVisualStyleBackColor = true;
             btnFilter.Click += btnFilter_Click;
-            // 
+
             // btnSort
-            // 
             btnSort.Anchor = AnchorStyles.Right;
             btnSort.Location = new Point(18, 142);
             btnSort.Margin = new Padding(3, 2, 3, 2);
@@ -82,9 +76,8 @@ namespace SummerPractice
             btnSort.Text = "Сортировка";
             btnSort.UseVisualStyleBackColor = true;
             btnSort.Click += btnSort_Click;
-            // 
+
             // btnCreateReport
-            // 
             btnCreateReport.Anchor = AnchorStyles.Right;
             btnCreateReport.Location = new Point(18, 168);
             btnCreateReport.Margin = new Padding(3, 2, 3, 2);
@@ -94,9 +87,8 @@ namespace SummerPractice
             btnCreateReport.Text = "Создать отчёт (Word)";
             btnCreateReport.UseVisualStyleBackColor = true;
             btnCreateReport.Click += btnCreateReport_Click;
-            // 
+
             // btnSave
-            // 
             btnSave.Anchor = AnchorStyles.Right;
             btnSave.Location = new Point(18, 219);
             btnSave.Margin = new Padding(3, 2, 3, 2);
@@ -106,26 +98,25 @@ namespace SummerPractice
             btnSave.Text = "Сохранить";
             btnSave.UseVisualStyleBackColor = true;
             btnSave.Click += btnSave_Click;
-            // 
+
             // dataGridViewMain
-            // 
-            dataGridViewMain.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            // ВАЖНО: события CellValidating, UserDeletingRow, KeyDown, DataError
+            // подписываются ТОЛЬКО в конструкторе ProjectForm — здесь их НЕТ
+            dataGridViewMain.Anchor = AnchorStyles.Top | AnchorStyles.Bottom |
+                                      AnchorStyles.Left | AnchorStyles.Right;
             dataGridViewMain.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             dataGridViewMain.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
             dataGridViewMain.BackgroundColor = Color.LightSkyBlue;
-            dataGridViewMain.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            dataGridViewMain.ColumnHeadersHeightSizeMode =
+                DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             dataGridViewMain.Location = new Point(18, 9);
             dataGridViewMain.Margin = new Padding(3, 2, 3, 2);
             dataGridViewMain.Name = "dataGridViewMain";
             dataGridViewMain.RowHeadersWidth = 51;
             dataGridViewMain.Size = new Size(556, 329);
             dataGridViewMain.TabIndex = 3;
-            dataGridViewMain.CellValidating += DataGridViewMain_CellValidating;
-            dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
-            dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
-            // 
+
             // btnChange
-            // 
             btnChange.Anchor = AnchorStyles.Right;
             btnChange.Location = new Point(18, 194);
             btnChange.Margin = new Padding(3, 2, 3, 2);
@@ -135,10 +126,10 @@ namespace SummerPractice
             btnChange.Text = "Изменить таблицу";
             btnChange.UseVisualStyleBackColor = true;
             btnChange.Click += btnChange_Click;
-            // 
+
             // groupBoxElemProject
-            // 
-            groupBoxElemProject.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
+            groupBoxElemProject.Anchor = AnchorStyles.Top | AnchorStyles.Bottom |
+                                         AnchorStyles.Right;
             groupBoxElemProject.Controls.Add(btnSearch);
             groupBoxElemProject.Controls.Add(comboBoxTables);
             groupBoxElemProject.Controls.Add(btnChange);
@@ -154,9 +145,8 @@ namespace SummerPractice
             groupBoxElemProject.Size = new Size(198, 329);
             groupBoxElemProject.TabIndex = 10;
             groupBoxElemProject.TabStop = false;
-            // 
+
             // btnSearch
-            // 
             btnSearch.Anchor = AnchorStyles.Right;
             btnSearch.Location = new Point(18, 92);
             btnSearch.Margin = new Padding(3, 2, 3, 2);
@@ -166,9 +156,8 @@ namespace SummerPractice
             btnSearch.Text = "Поиск";
             btnSearch.UseVisualStyleBackColor = true;
             btnSearch.Click += btnSearch_Click;
-            // 
+
             // ProjectForm
-            // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -184,9 +173,9 @@ namespace SummerPractice
             groupBoxElemProject.ResumeLayout(false);
             ResumeLayout(false);
         }
-
         #endregion
-        private System.Windows.Forms.Button btnExitToMain;
+
+        private Button btnExitToMain;
         private ComboBox comboBoxTables;
         private Button btnFilter;
         private Button btnSort;

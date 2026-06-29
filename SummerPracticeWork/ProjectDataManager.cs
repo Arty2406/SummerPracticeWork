@@ -137,6 +137,13 @@ namespace SummerPractice
             if (originalTable == null)
                 throw new InvalidOperationException("Таблица не выбрана.");
 
+            if (string.IsNullOrWhiteSpace(searchText))
+            {
+                originalTable.DefaultView.RowFilter = "";
+                IsSearched = false;
+                return originalTable.DefaultView;
+            }
+
             var conditions = new List<string>();
             string escapedText = searchText.Replace("'", "''");
             bool isNumber = decimal.TryParse(searchText, out decimal numValue);
@@ -164,13 +171,17 @@ namespace SummerPractice
             }
 
             if (conditions.Count == 0)
-                return null;
+            {
+                originalTable.DefaultView.RowFilter = "1=0";
+                return originalTable.DefaultView;
+            }
 
             string filter = string.Join(" OR ", conditions);
-            DataView dv = new DataView(originalTable) { RowFilter = filter };
+
+            originalTable.DefaultView.RowFilter = filter;
 
             IsSearched = true;
-            return dv;
+            return originalTable.DefaultView;
         }
 
         public void ResetSort() => IsSorted = false;
@@ -284,15 +295,18 @@ namespace SummerPractice
         public List<string> CheckForeignKeyViolations(DataRow row)
         {
             var violations = new List<string>();
-            if (string.IsNullOrEmpty(currentTableName) || !foreignKeys.ContainsKey(currentTableName))
+
+            if (string.IsNullOrEmpty(currentTableName)) return violations;
+
+            if (!foreignKeys.TryGetValue(currentTableName, out var fkList) || fkList == null)
                 return violations;
 
             DataTable table = row.Table ?? originalTable;
             if (table == null) return violations;
 
-            foreach (var fk in foreignKeys[currentTableName])
+            foreach (var fk in fkList)
             {
-                if (fk.ParentTable != currentTableName || !table.Columns.Contains(fk.ParentColumn))
+                if (fk == null || fk.ParentTable != currentTableName || !table.Columns.Contains(fk.ParentColumn))
                     continue;
 
                 object pkValue = null;
@@ -325,6 +339,7 @@ namespace SummerPractice
                 }
                 catch (Exception ex)
                 {
+                    System.Diagnostics.Debug.WriteLine($"CheckForeignKeyViolations SQL error: {ex.Message}");
                     violations.Add($"• Ошибка проверки таблицы «{fk.ChildTable}»: {ex.Message}");
                 }
             }
@@ -452,14 +467,12 @@ namespace SummerPractice
                         var violations = CheckForeignKeyViolations(row);
                         if (violations.Count > 0)
                         {
-                            originalTable.RejectChanges();
                             return new SaveResult
                             {
                                 Success = false,
                                 IsForeignKeyViolation = true,
                                 ErrorMessage = "Нельзя удалить запись — существуют связанные данные в других таблицах:\n\n"
                                             + string.Join("\n", violations)
-                                            + "\n\nСначала удалите связанные записи из дочерних таблиц."
                             };
                         }
                     }
@@ -468,37 +481,30 @@ namespace SummerPractice
                         var violations = CheckForeignKeyViolations(row);
                         if (violations.Count > 0)
                         {
-                            originalTable.RejectChanges();
                             return new SaveResult
                             {
                                 Success = false,
                                 IsForeignKeyViolation = true,
-                                ErrorMessage = "Изменение первичного ключа невозможно — нарушаются связи с другими таблицами:\n\n"
-                                            + string.Join("\n", violations)
-                                            + "\n\nИзмените или удалите связанные записи сначала."
+                                ErrorMessage = "Изменение первичного ключа невозможно:\n\n" + string.Join("\n", violations)
                             };
                         }
                     }
                 }
 
-                commandBuilder.RefreshSchema();
-
                 try
                 {
+                    commandBuilder.RefreshSchema();
                     dataAdapter.Update(originalTable);
                     originalTable.AcceptChanges();
-
                     return new SaveResult { Success = true };
                 }
                 catch (OleDbException ex)
                 {
                     string errorMsg = FormatOleDbError(ex);
-                    try { originalTable.RejectChanges(); } catch { }
                     return new SaveResult { Success = false, ErrorMessage = errorMsg };
                 }
                 catch (Exception ex)
                 {
-                    try { originalTable.RejectChanges(); } catch { }
                     return new SaveResult { Success = false, ErrorMessage = ex.Message };
                 }
             }
@@ -506,6 +512,8 @@ namespace SummerPractice
 
         private bool HasPrimaryKeyChanged(DataRow row)
         {
+            if(row == null || row.Table == null) return false;
+
             var pkCols = GetPrimaryKeyColumns();
 
             foreach (string pkCol in pkCols)

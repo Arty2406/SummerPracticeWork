@@ -43,6 +43,7 @@ namespace SummerPractice
             dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
             dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
             dataGridViewMain.DataError += DataGridViewMain_DataError;
+            dataGridViewMain.DataError += dataGridViewMain_DataError;
 
             this.Load += ProjectForm_Load;
         }
@@ -82,13 +83,15 @@ namespace SummerPractice
         {
             try
             {
-                if (dataGridViewMain.IsCurrentCellInEditMode)
+                if (dataGridViewMain != null && dataGridViewMain.IsCurrentCellInEditMode)
+                {
                     dataGridViewMain.EndEdit();
-
-                if (dataGridViewMain.DataSource != null)
-                    dataGridViewMain.BindingContext[dataGridViewMain.DataSource].EndCurrentEdit();
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка при завершении редактирования ячейки: {ex.Message}");
+            }
         }
 
         private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
@@ -151,9 +154,6 @@ namespace SummerPractice
                 dataGridViewMain.DataSource = null;
                 dataGridViewMain.Columns.Clear();
                 dataGridViewMain.Refresh();
-
-                dataGridViewMain.DataSource = null;
-                dataGridViewMain.Columns.Clear();
 
                 SetupAllColumns(dataManager.OriginalTable, dataManager.GetPrimaryKeyColumns(), currentLookups);
                 dataGridViewMain.DataSource = dataManager.OriginalTable;
@@ -281,6 +281,13 @@ namespace SummerPractice
             }
         }
 
+        private void dataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Grid DataError] Строка: {e.RowIndex}, Колонка: {e.ColumnIndex}");
+            e.ThrowException = false;
+            e.Cancel = false;
+        }
+
         private void btnExitToMain_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(
@@ -311,53 +318,91 @@ namespace SummerPractice
                 return;
             }
 
-            SafeEndEdit();
-            ResetAllViewStates();
-            dataManager.ResetAll();
-            dataManager.LoadForeignKeys();
-
-            // Перезагружаем lookups и перестраиваем столбцы, чтобы ComboBox-столбцы
-            // были актуальны и не вызывали рассогласования при редактировании
-            currentLookups = dataManager.GetLookupsForCurrentTable();
-
-            dataGridViewMain.DataSource = null;
-            dataGridViewMain.Columns.Clear();
-            SetupAllColumns(dataManager.OriginalTable, primaryKeyColumns, currentLookups);
-            dataGridViewMain.DataSource = dataManager.OriginalTable;
-
-            isAdminMode = true;
-            dataGridViewMain.ReadOnly = false;
-            dataGridViewMain.AllowUserToAddRows = true;
-            dataGridViewMain.AllowUserToDeleteRows = true;
-
-            UpdateComboBoxColumnsReadOnly(readOnly: false);
-
-            // PK — только для чтения
-            foreach (string pkCol in primaryKeyColumns)
+            if (dataManager == null || dataManager.OriginalTable == null)
             {
-                if (dataGridViewMain.Columns.Contains(pkCol))
-                {
-                    dataGridViewMain.Columns[pkCol].ReadOnly = true;
-                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
-                        System.Drawing.Color.LightGray;
-                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
-                        System.Drawing.Color.Gray;
-                }
+                MessageBox.Show("Невозможно включить режим редактирования: данные таблицы не загружены или отсутствуют.",
+                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
             }
 
-            btnChange.Text = "Завершить редактирование";
-            btnChange.BackColor = System.Drawing.Color.OrangeRed;
-            btnChange.ForeColor = System.Drawing.Color.White;
+            try
+            {
+                dataGridViewMain.SuspendLayout();
 
-            MessageBox.Show(
-                "Режим редактирования включён.\n\n" +
-                "• Для изменения значения — кликните по ячейке и введите новое.\n" +
-                "• Для FK-столбцов — выбор из выпадающего списка.\n" +
-                "• Для добавления строки — перейдите в последнюю пустую строку.\n" +
-                "• Для удаления строки — выделите её и нажмите Delete.\n" +
-                "• После изменений нажмите «Сохранить».\n\n" +
-                "Внимание: учитываются связи между таблицами!",
-                "Режим редактирования", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                SafeEndEdit();
+
+                ResetAllViewStates();
+
+                dataManager.ResetAll();
+                dataManager.LoadForeignKeys();
+
+                currentLookups = dataManager.GetLookupsForCurrentTable();
+
+                dataGridViewMain.DataSource = null;
+                dataGridViewMain.DataBindings.Clear();
+                if (dataGridViewMain.BindingContext != null && dataManager.OriginalTable != null)
+                {
+                    try { dataGridViewMain.BindingContext[dataManager.OriginalTable]?.EndCurrentEdit(); } catch { }
+                }
+
+                dataGridViewMain.Columns.Clear();
+
+                if (dataManager.OriginalTable != null)
+                {
+                    dataManager.OriginalTable.DefaultView.RowFilter = "";
+                    dataManager.OriginalTable.DefaultView.Sort = "";
+                }
+
+                var pkCols = primaryKeyColumns ?? new List<string>();
+                var lookups = currentLookups ?? new List<LookupInfo>();
+
+                SetupAllColumns(dataManager.OriginalTable, pkCols, lookups);
+
+                dataGridViewMain.DataSource = dataManager.OriginalTable;
+
+                isAdminMode = true;
+                dataGridViewMain.ReadOnly = false;
+                dataGridViewMain.AllowUserToAddRows = true;
+                dataGridViewMain.AllowUserToDeleteRows = true;
+
+                UpdateComboBoxColumnsReadOnly(readOnly: false);
+
+                if (primaryKeyColumns != null)
+                {
+                    foreach (string pkCol in primaryKeyColumns)
+                    {
+                        if (!string.IsNullOrEmpty(pkCol) && dataGridViewMain.Columns.Contains(pkCol))
+                        {
+                            dataGridViewMain.Columns[pkCol].ReadOnly = true;
+                            dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
+                            dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor = System.Drawing.Color.Gray;
+                        }
+                    }
+                }
+
+                btnChange.Text = "Завершить редактирование";
+                btnChange.BackColor = System.Drawing.Color.OrangeRed;
+                btnChange.ForeColor = System.Drawing.Color.White;
+
+                dataGridViewMain.ResumeLayout(true);
+
+                MessageBox.Show(
+                    "Режим редактирования включён.\n\n" +
+                    "• Для изменения значения — кликните по ячейке и введите новое.\n" +
+                    "• Для FK-столбцов — выбор из выпадающего списка.\n" +
+                    "• Для добавления строки — перейдите в последнюю пустую строку.\n" +
+                    "• Для удаления строки — выделите её и нажмите Delete.\n" +
+                    "• После изменений нажмите «Сохранить».\n\n" +
+                    "Внимание: учитываются связи между таблицами!",
+                    "Режим редактирования", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                dataGridViewMain.ResumeLayout(true);
+
+                MessageBox.Show($"Критическая ошибка при переключении в режим редактирования:\n{ex.Message}\n\nСтек вызовов:\n{ex.StackTrace}",
+                    "Ошибка интерфейса", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void ExitEditMode()
@@ -859,17 +904,32 @@ namespace SummerPractice
             {
                 SafeEndEdit();
 
-                if (dataGridViewMain.DataSource is DataView)
-                    dataGridViewMain.DataSource = dataManager.OriginalTable;
+                if (dataGridViewMain == null) return;
+
+                if (dataManager != null && dataManager.OriginalTable != null)
+                {
+                    if (dataGridViewMain.DataSource is DataView)
+                    {
+                        if (dataGridViewMain.DataSource is DataView dv)
+                        {
+                            dv.RowFilter = "";
+                        }
+                    }
+                    else
+                    {
+                        dataGridViewMain.DataSource = dataManager.OriginalTable;
+                    }
+                }
 
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
+                {
                     try { col.Visible = true; } catch { }
-                foreach (DataGridViewRow row in dataGridViewMain.Rows)
-                    try { row.Visible = true; } catch { }
+                }
+
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка сброса: {ex.Message}", "Ошибка",
+                MessageBox.Show($"Ошибка сброса состояния интерфейса:\n{ex.Message}", "Ошибка",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -947,59 +1007,87 @@ namespace SummerPractice
 
         private void DataGridViewMain_DefaultValuesNeeded(object sender, DataGridViewRowEventArgs e)
         {
-            foreach (string pkCol in primaryKeyColumns)
+            if (dataManager == null || primaryKeyColumns == null) return;
+
+            try
             {
-                if (dataGridViewMain.Columns.Contains(pkCol))
-                    e.Row.Cells[pkCol].Value = dataManager.GetNextPrimaryKeyValue(pkCol);
+                foreach (string pkCol in primaryKeyColumns)
+                {
+                    if (string.IsNullOrEmpty(pkCol)) continue;
+
+                    if (dataGridViewMain.Columns.Contains(pkCol))
+                    {
+                        object nextValue = dataManager.GetNextPrimaryKeyValue(pkCol);
+
+                        if (e.Row.Cells[pkCol] != null)
+                        {
+                            e.Row.Cells[pkCol].Value = nextValue;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при генерации ключевых значений для новой строки:\n{ex.Message}",
+                    "Ошибка редактирования", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
+        private bool _isShowingValidationError = false;
+
         private void DataGridViewMain_CellValidating(object sender, DataGridViewCellValidatingEventArgs e)
         {
-            if (!isAdminMode || e.RowIndex < 0) return;
+            if (!isAdminMode || e.RowIndex < 0 || e.RowIndex >= dataGridViewMain.Rows.Count) return;
 
             if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn) return;
+
+            if (_isShowingValidationError) return;
 
             try
             {
                 DataGridViewRow row = dataGridViewMain.Rows[e.RowIndex];
+
+                if (!(row.DataBoundItem is DataRowView drv)) return;
+
                 object newValue = e.FormattedValue;
+                string columnName = dataGridViewMain.Columns[e.ColumnIndex].Name;
 
                 if (newValue == null || string.IsNullOrWhiteSpace(newValue.ToString()))
                 {
                     bool hasOtherValues = false;
-                    for (int i = 0; i < row.Cells.Count; i++)
+
+                    foreach (DataColumn col in drv.Row.Table.Columns)
                     {
-                        if (i == e.ColumnIndex) continue;
+                        if (col.ColumnName == columnName) continue;
 
-                        // Пропускаем ComboBox-ячейки — их значение нельзя безопасно
-                        // читать через .Value во время валидации другой ячейки
-                        if (dataGridViewMain.Columns[i] is DataGridViewComboBoxColumn) continue;
-
-                        object cellValue = row.Cells[i].Value;
-                        if (cellValue != null && cellValue != DBNull.Value &&
-                            !string.IsNullOrWhiteSpace(cellValue.ToString()))
+                        object cellData = drv.Row[col.ColumnName];
+                        if (cellData != null && cellData != DBNull.Value && !string.IsNullOrWhiteSpace(cellData.ToString()))
                         {
                             hasOtherValues = true;
                             break;
                         }
                     }
 
-                    bool wasFilled = row.Cells[e.ColumnIndex].Value != null &&
-                                     row.Cells[e.ColumnIndex].Value != DBNull.Value &&
-                                     !string.IsNullOrWhiteSpace(row.Cells[e.ColumnIndex].Value.ToString());
+                    object originalValue = drv.Row[columnName];
+                    bool wasFilled = originalValue != null && originalValue != DBNull.Value && !string.IsNullOrWhiteSpace(originalValue.ToString());
 
                     if (hasOtherValues || wasFilled)
                     {
-                        string colName = dataGridViewMain.Columns[e.ColumnIndex].HeaderText;
                         e.Cancel = true;
-                        row.Cells[e.ColumnIndex].ErrorText =
-                            $"Нельзя очистить поле «{colName}»: строка содержит данные.";
+                        string colHeaderText = dataGridViewMain.Columns[e.ColumnIndex].HeaderText;
+                        row.Cells[e.ColumnIndex].ErrorText = $"Поле «{colHeaderText}» не может быть пустым.";
+
+                        _isShowingValidationError = true;
 
                         MessageBox.Show(
-                            $"Нельзя оставить поле «{colName}» пустым.\n\n" +
-                            "Строка содержит данные — либо заполните поле, либо удалите всю строку.",
-                            "Ошибка ввода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            $"Нельзя оставить поле «{colHeaderText}» пустым.\n\n" +
+                            "Строка содержит данные — либо заполните поле, либо удалите всю строку целиком (кнопкой Delete).",
+                            "Ошибка ввода",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning
+                        );
+
+                        _isShowingValidationError = false;
                     }
                 }
                 else
@@ -1009,8 +1097,9 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка валидации: {ex.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _isShowingValidationError = false;
+
+                System.Diagnostics.Debug.WriteLine($"Ошибка валидации: {ex.Message}");
             }
         }
 
@@ -1097,36 +1186,47 @@ namespace SummerPractice
 
         private Type GetActualColumnType(DataColumn col)
         {
-            if (dataManager.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
+            if (col == null) return typeof(string);
+            if (dataManager == null || dataManager.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
                 return col.DataType;
 
-            int checkRows = Math.Min(20, dataManager.OriginalTable.Rows.Count);
-            bool allNumbers = true;
-            bool allDates = true;
-            int nonEmptyCount = 0;
-
-            for (int i = 0; i < checkRows; i++)
+            try
             {
-                object value = dataManager.OriginalTable.Rows[i][col];
+                int checkRows = Math.Min(20, dataManager.OriginalTable.Rows.Count);
+                bool allNumbers = true;
+                bool allDates = true;
+                int nonEmptyCount = 0;
 
-                if (value == null || value == DBNull.Value || string.IsNullOrWhiteSpace(value.ToString()))
-                    continue;
+                for (int i = 0; i < checkRows; i++)
+                {
+                    if (i >= dataManager.OriginalTable.Rows.Count) break;
 
-                nonEmptyCount++;
-                string strValue = value.ToString().Trim();
+                    object value = dataManager.OriginalTable.Rows[i][col];
 
-                if (allNumbers && !decimal.TryParse(strValue, System.Globalization.NumberStyles.Any, null, out _))
-                    allNumbers = false;
+                    if (value == null || value == DBNull.Value || string.IsNullOrWhiteSpace(value.ToString()))
+                        continue;
 
-                if (allDates && !DateTime.TryParse(strValue, out _))
-                    allDates = false;
+                    nonEmptyCount++;
+                    string strValue = value.ToString().Trim();
 
-                if (!allNumbers && !allDates)
-                    break;
+                    if (allNumbers && !decimal.TryParse(strValue, System.Globalization.NumberStyles.Any, null, out _))
+                        allNumbers = false;
+
+                    if (allDates && !DateTime.TryParse(strValue, out _))
+                        allDates = false;
+
+                    if (!allNumbers && !allDates)
+                        break;
+                }
+
+                if (allNumbers && nonEmptyCount > 0) return typeof(decimal);
+                if (allDates && nonEmptyCount > 0) return typeof(DateTime);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка анализа типа колонки: {ex.Message}");
             }
 
-            if (allNumbers && nonEmptyCount > 0) return typeof(decimal);
-            if (allDates && nonEmptyCount > 0) return typeof(DateTime);
             return col.DataType;
         }
 

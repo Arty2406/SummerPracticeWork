@@ -21,13 +21,18 @@ namespace SummerPractice
         public bool IsForeignKeyViolation { get; set; }
     }
 
-    public class LookupInfo
+    public class LookupInfo : IDisposable
     {
         public string FkColumn { get; set; }
         public string ParentTable { get; set; }
         public string ParentPkColumn { get; set; }
         public string DisplayColumn { get; set; }
         public DataTable LookupTable { get; set; }
+
+        public void Dispose()
+        {
+            LookupTable?.Dispose();
+        }
     }
 
     public class ProjectDataManager : IDisposable
@@ -39,7 +44,8 @@ namespace SummerPractice
         private readonly string connStr;
         private bool disposed = false;
 
-        private readonly Dictionary<string, List<ForeignKeyInfo>> foreignKeys = new Dictionary<string, List<ForeignKeyInfo>>();
+        // Словарь связей: Имя родительской таблицы -> Список зависимых внешних ключей
+        private readonly Dictionary<string, List<ForeignKeyInfo>> foreignKeys = new Dictionary<string, List<ForeignKeyInfo>>(StringComparer.OrdinalIgnoreCase);
 
         #region Свойства
 
@@ -54,7 +60,7 @@ namespace SummerPractice
 
         public ProjectDataManager(string connectionString)
         {
-            connStr = connectionString;
+            connStr = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
         }
 
         #region Загрузка таблиц
@@ -64,20 +70,24 @@ namespace SummerPractice
             var list = new List<string>();
             try
             {
-                var schema = SafeDatabaseHelper.GetSchemaTable(connStr,
+                using (var schema = SafeDatabaseHelper.GetSchemaTable(connStr,
                     OleDbSchemaGuid.Tables,
-                    new object[] { null, null, null, "TABLE" });
-
-                if (schema != null)
+                    new object[] { null, null, null, "TABLE" }))
                 {
-                    foreach (DataRow row in schema.Rows)
+                    if (schema != null)
                     {
-                        string name = row["TABLE_NAME"].ToString();
-                        if (!name.StartsWith("MSys") && !name.StartsWith("USys"))
+                        foreach (DataRow row in schema.Rows)
                         {
-                            if (!isAdmin && name.Equals("Пользователи", StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            list.Add(name);
+                            string name = row["TABLE_NAME"]?.ToString();
+                            if (string.IsNullOrEmpty(name)) continue;
+
+                            if (!name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase) &&
+                                !name.StartsWith("USys", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!isAdmin && name.Equals("Пользователи", StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                list.Add(name);
+                            }
                         }
                     }
                 }
@@ -92,20 +102,26 @@ namespace SummerPractice
 
         public void SelectTable(string tableName)
         {
-                currentTableName = tableName;
-                string sql = $"SELECT * FROM [{tableName}]";
+            if (string.IsNullOrWhiteSpace(tableName))
+                throw new ArgumentException("Имя таблицы не может быть пустым.", nameof(tableName));
 
-                commandBuilder?.Dispose();
-                dataAdapter?.Dispose();
+            // Экранируем закрывающие квадратные скобки для защиты от инъекций в имени таблицы
+            string escapedTableName = tableName.Replace("]", "]]");
+            currentTableName = tableName;
+            string sql = $"SELECT * FROM [{escapedTableName}]";
 
-                dataAdapter = new OleDbDataAdapter(sql, connStr);
-                commandBuilder = new OleDbCommandBuilder(dataAdapter);
+            commandBuilder?.Dispose();
+            dataAdapter?.Dispose();
+            originalTable?.Dispose();
 
-                var dt = new DataTable();
-                dataAdapter.Fill(dt);
-                originalTable = dt;
+            dataAdapter = new OleDbDataAdapter(sql, connStr);
+            commandBuilder = new OleDbCommandBuilder(dataAdapter);
 
-                ResetAll();
+            var dt = new DataTable();
+            dataAdapter.Fill(dt);
+            originalTable = dt;
+
+            ResetAll();
         }
 
         #endregion
@@ -120,12 +136,18 @@ namespace SummerPractice
             if (!originalTable.Columns.Contains(columnName))
                 throw new ArgumentException($"Столбец '{columnName}' отсутствует в таблице.");
 
-            DataView dv = new DataView(originalTable);
+            DataView dv = originalTable.DefaultView;
             string sortDirection = ascending ? "ASC" : "DESC";
             dv.Sort = $"[{columnName}] {sortDirection}";
 
             IsSorted = true;
             return dv;
+        }
+
+        public DataView PerformSearch(string searchText, IEnumerable<string> columnNames)
+        {
+            string columnName = (columnNames == null || !columnNames.Any()) ? "Все столбцы" : columnNames.First();
+            return PerformSearch(searchText, columnName);
         }
 
         public DataView PerformSearch(string searchText, string columnName)
@@ -141,13 +163,19 @@ namespace SummerPractice
             }
 
             var conditions = new List<string>();
-            string escapedText = searchText.Replace("'", "''");
-            bool isNumber = decimal.TryParse(searchText, out decimal numValue);
+            // Экранирование спецсимволов для RowFilter ADO.NET
+            string escapedText = searchText.Replace("'", "''")
+                                           .Replace("[", "[[]")
+                                           .Replace("]", "[]]")
+                                           .Replace("*", "[*]")
+                                           .Replace("%", "[%]");
+
+            bool isNumber = decimal.TryParse(searchText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal numValue);
             bool isDate = DateTime.TryParse(searchText, out DateTime dateValue);
 
             IEnumerable<DataColumn> colsToSearch = columnName == "Все столбцы"
                 ? originalTable.Columns.Cast<DataColumn>()
-                : originalTable.Columns.Cast<DataColumn>().Where(c => c.ColumnName == columnName);
+                : originalTable.Columns.Cast<DataColumn>().Where(c => c.ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase));
 
             foreach (DataColumn col in colsToSearch)
             {
@@ -162,7 +190,7 @@ namespace SummerPractice
                 }
                 else if (col.DataType == typeof(DateTime) && isDate)
                 {
-                    conditions.Add($"[{col.ColumnName}] = #{dateValue:MM/dd/yyyy}#");
+                    conditions.Add($"[{col.ColumnName}] = #{dateValue:yyyy-MM-dd}#"); // Безопасный ISO-формат дат для Access
                 }
             }
 
@@ -172,16 +200,23 @@ namespace SummerPractice
                 return originalTable.DefaultView;
             }
 
-            string filter = string.Join(" OR ", conditions);
-
-            originalTable.DefaultView.RowFilter = filter;
-
+            originalTable.DefaultView.RowFilter = string.Join(" OR ", conditions);
             IsSearched = true;
             return originalTable.DefaultView;
         }
 
-        public void ResetSort() => IsSorted = false;
-        public void ResetSearch() => IsSearched = false;
+        public void ResetSort()
+        {
+            if (originalTable != null) originalTable.DefaultView.Sort = "";
+            IsSorted = false;
+        }
+
+        public void ResetSearch()
+        {
+            if (originalTable != null) originalTable.DefaultView.RowFilter = "";
+            IsSearched = false;
+        }
+
         public void MarkFiltered() => IsFiltered = true;
 
         public void ResetAll()
@@ -189,6 +224,12 @@ namespace SummerPractice
             IsFiltered = false;
             IsSorted = false;
             IsSearched = false;
+
+            if (originalTable != null)
+            {
+                originalTable.DefaultView.RowFilter = "";
+                originalTable.DefaultView.Sort = "";
+            }
         }
 
         #endregion
@@ -202,14 +243,16 @@ namespace SummerPractice
 
             try
             {
-                var pkSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Primary_Keys, new object[] { null, null, currentTableName });
-                if (pkSchema != null)
+                using (var pkSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Primary_Keys, new object[] { null, null, currentTableName }))
                 {
-                    foreach (DataRow row in pkSchema.Rows)
+                    if (pkSchema != null)
                     {
-                        string columnName = row["COLUMN_NAME"]?.ToString();
-                        if (!string.IsNullOrEmpty(columnName))
-                            pkColumns.Add(columnName);
+                        foreach (DataRow row in pkSchema.Rows)
+                        {
+                            string columnName = row["COLUMN_NAME"]?.ToString();
+                            if (!string.IsNullOrEmpty(columnName))
+                                pkColumns.Add(columnName);
+                        }
                     }
                 }
             }
@@ -227,13 +270,20 @@ namespace SummerPractice
                 return null;
 
             DataColumn col = originalTable.Columns[columnName];
+
+            // Если колонка автоинкрементная, СУБД назначит ID сама
+            if (col.AutoIncrement)
+                return null;
+
             decimal maxValue = 0;
             bool hasValues = false;
 
             foreach (DataRow row in originalTable.Rows)
             {
                 if (row.RowState == DataRowState.Deleted) continue;
-                object value = row[columnName];
+
+                // Безопасное получение актуального значения ячейки
+                object value = row.RowState == DataRowState.Detached ? row[columnName] : row[columnName, DataRowVersion.Current];
                 if (value == null || value == DBNull.Value) continue;
 
                 try
@@ -261,25 +311,28 @@ namespace SummerPractice
             foreignKeys.Clear();
             try
             {
-                var fkSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Foreign_Keys, new object[] { null, null, null });
-                if (fkSchema == null) return;
-
-                foreach (DataRow row in fkSchema.Rows)
+                using (var fkSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Foreign_Keys, new object[] { null, null, null }))
                 {
-                    var fk = new ForeignKeyInfo
+                    if (fkSchema == null) return;
+
+                    foreach (DataRow row in fkSchema.Rows)
                     {
-                        ParentTable = row["PK_TABLE_NAME"]?.ToString(),
-                        ParentColumn = row["PK_COLUMN_NAME"]?.ToString(),
-                        ChildTable = row["FK_TABLE_NAME"]?.ToString(),
-                        ChildColumn = row["FK_COLUMN_NAME"]?.ToString()
-                    };
+                        var fk = new ForeignKeyInfo
+                        {
+                            ParentTable = row["PK_TABLE_NAME"]?.ToString(),
+                            ParentColumn = row["PK_COLUMN_NAME"]?.ToString(),
+                            ChildTable = row["FK_TABLE_NAME"]?.ToString(),
+                            ChildColumn = row["FK_COLUMN_NAME"]?.ToString()
+                        };
 
-                    if (string.IsNullOrEmpty(fk.ParentTable) || string.IsNullOrEmpty(fk.ChildTable))
-                        continue;
+                        if (string.IsNullOrEmpty(fk.ParentTable) || string.IsNullOrEmpty(fk.ChildTable))
+                            continue;
 
-                    if (!foreignKeys.ContainsKey(fk.ParentTable))
-                        foreignKeys[fk.ParentTable] = new List<ForeignKeyInfo>();
-                    foreignKeys[fk.ParentTable].Add(fk);
+                        if (!foreignKeys.ContainsKey(fk.ParentTable))
+                            foreignKeys[fk.ParentTable] = new List<ForeignKeyInfo>();
+
+                        foreignKeys[fk.ParentTable].Add(fk);
+                    }
                 }
             }
             catch (Exception ex)
@@ -294,43 +347,70 @@ namespace SummerPractice
 
             if (string.IsNullOrEmpty(currentTableName)) return violations;
 
+            // Если словарь связей пуст, попробуем загрузить его на лету
+            if (foreignKeys.Count == 0)
+            {
+                LoadForeignKeys();
+            }
+
             if (!foreignKeys.TryGetValue(currentTableName, out var fkList) || fkList == null)
                 return violations;
 
-            DataTable table = row.Table ?? originalTable;
+            // Безопасно определяем таблицу. Всегда приоритет отдаем полноценной originalTable
+            DataTable table = originalTable ?? row.Table;
             if (table == null) return violations;
 
             foreach (var fk in fkList)
             {
-                if (fk == null || fk.ParentTable != currentTableName || !table.Columns.Contains(fk.ParentColumn))
+                if (fk == null || !fk.ParentTable.Equals(currentTableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Проверяем, есть ли колонка в нашей оригинальной таблице
+                if (!table.Columns.Contains(fk.ParentColumn))
                     continue;
 
                 object pkValue = null;
                 try
                 {
-                    if (row.HasVersion(DataRowVersion.Original))
+                    // Пытаемся безопасно достать оригинальное значение ключа
+                    if (row.RowState == DataRowState.Deleted)
+                    {
+                        if (row.HasVersion(DataRowVersion.Original))
+                            pkValue = row[fk.ParentColumn, DataRowVersion.Original];
+                    }
+                    else if (row.HasVersion(DataRowVersion.Original))
+                    {
                         pkValue = row[fk.ParentColumn, DataRowVersion.Original];
-                    else if (row.RowState != DataRowState.Deleted)
-                        pkValue = row[fk.ParentColumn];
+                    }
+                    else if (row.HasVersion(DataRowVersion.Current))
+                    {
+                        pkValue = row[fk.ParentColumn, DataRowVersion.Current];
+                    }
                 }
-                catch { continue; }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Ошибка получения pkValue: {ex.Message}");
+                    continue;
+                }
 
                 if (pkValue == null || pkValue == DBNull.Value)
                     continue;
 
-                string checkSql = $"SELECT COUNT(*) FROM [{fk.ChildTable}] WHERE [{fk.ChildColumn}] = ?";
+                string checkSql = $"SELECT COUNT(*) FROM [{fk.ChildTable.Replace("]", "]]")}] WHERE [{fk.ChildColumn.Replace("]", "]]")}] = ?";
 
                 try
                 {
-                    using var conn = new OleDbConnection(connStr);
-                    using var cmd = new OleDbCommand(checkSql, conn);
-                    cmd.Parameters.AddWithValue("?", pkValue);
-                    conn.Open();
-
-                    int count = Convert.ToInt32(cmd.ExecuteScalar());
-                    if (count > 0)
+                    using (var conn = new OleDbConnection(connStr))
+                    using (var cmd = new OleDbCommand(checkSql, conn))
                     {
-                        violations.Add($"• В таблице «{fk.ChildTable}» есть {count} записей, ссылающихся на эту (поле «{fk.ChildColumn}» = {pkValue}).");
+                        cmd.Parameters.AddWithValue("?", pkValue);
+                        conn.Open();
+
+                        int count = Convert.ToInt32(cmd.ExecuteScalar());
+                        if (count > 0)
+                        {
+                            violations.Add($"• В таблице «{fk.ChildTable}» есть {count} записей, ссылающихся на эту (поле «{fk.ChildColumn}» = {pkValue}).");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -352,36 +432,44 @@ namespace SummerPractice
             var result = new List<LookupInfo>();
             if (string.IsNullOrEmpty(currentTableName)) return result;
 
-                var fkSchema = SafeDatabaseHelper.GetSchemaTable(
+            try
+            {
+                using (var fkSchema = SafeDatabaseHelper.GetSchemaTable(
                     connStr,
                     OleDbSchemaGuid.Foreign_Keys,
-                    new object[] { null, null, null, null, null, currentTableName });
-
-                if (fkSchema == null) return result;
-
-                foreach (DataRow fkRow in fkSchema.Rows)
+                    new object[] { null, null, null, null, null, currentTableName }))
                 {
-                    string parentTable = fkRow["PK_TABLE_NAME"]?.ToString();
-                    string parentPkCol = fkRow["PK_COLUMN_NAME"]?.ToString();
-                    string childFkCol = fkRow["FK_COLUMN_NAME"]?.ToString();
+                    if (fkSchema == null) return result;
 
-                    if (string.IsNullOrEmpty(parentTable) || string.IsNullOrEmpty(parentPkCol) || string.IsNullOrEmpty(childFkCol))
-                        continue;
-
-                    string displayCol = GetDisplayColumn(parentTable, parentPkCol);
-                    if (displayCol == null) continue;
-
-                    DataTable lookupTable = LoadLookupTable(parentTable, parentPkCol, displayCol);
-
-                    result.Add(new LookupInfo
+                    foreach (DataRow fkRow in fkSchema.Rows)
                     {
-                        FkColumn = childFkCol,
-                        ParentTable = parentTable,
-                        ParentPkColumn = parentPkCol,
-                        DisplayColumn = displayCol,
-                        LookupTable = lookupTable
-                    });
+                        string parentTable = fkRow["PK_TABLE_NAME"]?.ToString();
+                        string parentPkCol = fkRow["PK_COLUMN_NAME"]?.ToString();
+                        string childFkCol = fkRow["FK_COLUMN_NAME"]?.ToString();
+
+                        if (string.IsNullOrEmpty(parentTable) || string.IsNullOrEmpty(parentPkCol) || string.IsNullOrEmpty(childFkCol))
+                            continue;
+
+                        string displayCol = GetDisplayColumn(parentTable, parentPkCol);
+                        if (displayCol == null) continue;
+
+                        DataTable lookupTable = LoadLookupTable(parentTable, parentPkCol, displayCol);
+
+                        result.Add(new LookupInfo
+                        {
+                            FkColumn = childFkCol,
+                            ParentTable = parentTable,
+                            ParentPkColumn = parentPkCol,
+                            DisplayColumn = displayCol,
+                            LookupTable = lookupTable
+                        });
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetLookupsForCurrentTable error: {ex.Message}");
+            }
 
             return result;
         }
@@ -390,31 +478,35 @@ namespace SummerPractice
         {
             try
             {
-                var colSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
-                if (colSchema == null) return null;
+                using (var colSchema = SafeDatabaseHelper.GetSchemaTable(connStr, OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null }))
+                {
+                    if (colSchema == null) return null;
 
-                var columns = colSchema.Rows.Cast<DataRow>()
-                    .OrderBy(r => Convert.ToInt32(r["ORDINAL_POSITION"]))
-                    .Select(r => r["COLUMN_NAME"]?.ToString())
-                    .Where(name => !string.IsNullOrEmpty(name))
-                    .ToList();
+                    var columns = colSchema.Rows.Cast<DataRow>()
+                        .OrderBy(r => Convert.ToInt32(r["ORDINAL_POSITION"]))
+                        .Select(r => r["COLUMN_NAME"]?.ToString())
+                        .Where(name => !string.IsNullOrEmpty(name))
+                        .ToList();
 
-                return columns.FirstOrDefault(c => !c.Equals(pkColumnName, StringComparison.OrdinalIgnoreCase));
+                    return columns.FirstOrDefault(c => !c.Equals(pkColumnName, StringComparison.OrdinalIgnoreCase));
+                }
             }
             catch { return null; }
         }
 
         private DataTable LoadLookupTable(string tableName, string pkCol, string displayCol)
         {
-            string sql = $"SELECT [{pkCol}], [{displayCol}] FROM [{tableName}] ORDER BY [{displayCol}]";
+            string escapedTable = tableName.Replace("]", "]]");
+            string escapedPk = pkCol.Replace("]", "]]");
+            string escapedDisp = displayCol.Replace("]", "]]");
+
+            string sql = $"SELECT [{escapedPk}], [{escapedDisp}] FROM [{escapedTable}] ORDER BY [{escapedDisp}]";
             var dt = SafeDatabaseHelper.ExecuteQuery(connStr, sql);
 
             try
             {
                 if (dt != null && dt.Columns.Count >= 2)
                 {
-                    // Сбрасываем PrimaryKey — без этого InsertAt с DBNull
-                    // выбрасывает NoNullAllowedException и таблица остаётся пустой
                     dt.PrimaryKey = Array.Empty<DataColumn>();
 
                     dt.Columns[0].ColumnName = "ValueMember";
@@ -430,11 +522,11 @@ namespace SummerPractice
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"LoadLookupTable structural error [{tableName}]: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"LoadLookupTable structural error [{tableName}]: {ex.Message}");
 
                 if (dt == null || dt.Columns.Count == 0)
                 {
+                    dt?.Dispose();
                     dt = new DataTable();
                     dt.Columns.Add("ValueMember", typeof(int));
                     dt.Columns.Add("DisplayMember", typeof(string));
@@ -452,82 +544,108 @@ namespace SummerPractice
 
         public SaveResult TrySaveChanges()
         {
-            if (dataAdapter == null || commandBuilder == null || originalTable == null)
-                return new SaveResult { Success = false, ErrorMessage = "Нет данных для сохранения." };
+            if (originalTable == null || string.IsNullOrEmpty(currentTableName))
+                return new SaveResult { Success = false, ErrorMessage = "Нет данных для сохранения или таблица не выбрана." };
 
-                DataTable changes = originalTable.GetChanges();
-                if (changes == null)
-                    return new SaveResult { Success = true };
+            DataTable changes = originalTable.GetChanges();
+            if (changes == null)
+                return new SaveResult { Success = true };
 
-                foreach (DataRow row in changes.Rows)
+            foreach (DataRow row in changes.Rows)
+            {
+                if (row.RowState == DataRowState.Deleted)
                 {
-                    if (row.RowState == DataRowState.Deleted)
+                    var violations = CheckForeignKeyViolations(row);
+                    if (violations.Count > 0)
                     {
-                        var violations = CheckForeignKeyViolations(row);
-                        if (violations.Count > 0)
+                        return new SaveResult
                         {
-                            return new SaveResult
-                            {
-                                Success = false,
-                                IsForeignKeyViolation = true,
-                                ErrorMessage = "Нельзя удалить запись — существуют связанные данные в других таблицах:\n\n"
-                                            + string.Join("\n", violations)
-                            };
-                        }
-                    }
-                    else if (row.RowState == DataRowState.Modified && HasPrimaryKeyChanged(row))
-                    {
-                        var violations = CheckForeignKeyViolations(row);
-                        if (violations.Count > 0)
-                        {
-                            return new SaveResult
-                            {
-                                Success = false,
-                                IsForeignKeyViolation = true,
-                                ErrorMessage = "Изменение первичного ключа невозможно:\n\n" + string.Join("\n", violations)
-                            };
-                        }
+                            Success = false,
+                            IsForeignKeyViolation = true,
+                            ErrorMessage = "Нельзя удалить запись — существуют связанные данные в других таблицах:\n\n" + string.Join("\n", violations)
+                        };
                     }
                 }
+                else if (row.RowState == DataRowState.Modified && HasPrimaryKeyChanged(row))
+                {
+                    var violations = CheckForeignKeyViolations(row);
+                    if (violations.Count > 0)
+                    {
+                        return new SaveResult
+                        {
+                            Success = false,
+                            IsForeignKeyViolation = true,
+                            ErrorMessage = "Изменение первичного ключа невозможно:\n\n" + string.Join("\n", violations)
+                        };
+                    }
+                }
+            }
 
-                try
+            try
+            {
+                if (dataAdapter == null || commandBuilder == null)
                 {
-                    commandBuilder.RefreshSchema();
-                    dataAdapter.Update(originalTable);
-                    originalTable.AcceptChanges();
-                    return new SaveResult { Success = true };
+                    string escapedTableName = currentTableName.Replace("]", "]]");
+                    string sql = $"SELECT * FROM [{escapedTableName}]";
+
+                    dataAdapter?.Dispose();
+                    commandBuilder?.Dispose();
+
+                    dataAdapter = new OleDbDataAdapter(sql, connStr);
+                    commandBuilder = new OleDbCommandBuilder(dataAdapter);
                 }
-                catch (OleDbException ex)
-                {
-                    string errorMsg = FormatOleDbError(ex);
-                    return new SaveResult { Success = false, ErrorMessage = errorMsg };
-                }
-                catch (Exception ex)
-                {
-                    return new SaveResult { Success = false, ErrorMessage = ex.Message };
-                }
+
+                commandBuilder.RefreshSchema();
+                dataAdapter.Update(originalTable);
+                originalTable.AcceptChanges();
+
+                return new SaveResult { Success = true };
+            }
+            catch (OleDbException ex)
+            {
+                string errorMsg = FormatOleDbError(ex);
+                return new SaveResult { Success = false, ErrorMessage = errorMsg };
+            }
+            catch (Exception ex)
+            {
+                return new SaveResult { Success = false, ErrorMessage = ex.Message };
+            }
         }
 
         private bool HasPrimaryKeyChanged(DataRow row)
         {
-            if(row == null || row.Table == null) return false;
+            if (row == null) return false;
+
+            DataTable table = originalTable ?? row.Table;
+            if (table == null) return false;
 
             var pkCols = GetPrimaryKeyColumns();
+            if (pkCols == null || pkCols.Count == 0) return false;
 
             foreach (string pkCol in pkCols)
             {
-                if (!row.Table.Columns.Contains(pkCol)) continue;
-                if (!row.HasVersion(DataRowVersion.Original)) continue;
+                if (string.IsNullOrEmpty(pkCol) || !table.Columns.Contains(pkCol))
+                    continue;
 
-                object original = row[pkCol, DataRowVersion.Original];
-                object current = row[pkCol];
+                if (!row.HasVersion(DataRowVersion.Original))
+                    continue;
 
-                bool originalIsNull = (original == null || original == DBNull.Value);
-                bool currentIsNull = (current == null || current == DBNull.Value);
+                try
+                {
+                    object original = row[pkCol, DataRowVersion.Original];
+                    object current = row[pkCol, DataRowVersion.Current];
 
-                if (originalIsNull && currentIsNull) continue;
-                if (originalIsNull != currentIsNull) return true;
-                if (!object.Equals(original, current)) return true;
+                    bool originalIsNull = (original == null || original == DBNull.Value);
+                    bool currentIsNull = (current == null || current == DBNull.Value);
+
+                    if (originalIsNull && currentIsNull) continue;
+                    if (originalIsNull != currentIsNull) return true;
+                    if (!object.Equals(original, current)) return true;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Ошибка сравнения ПК для колонки {pkCol}: {ex.Message}");
+                }
             }
 
             return false;

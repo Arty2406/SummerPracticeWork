@@ -11,7 +11,6 @@ namespace SummerPractice.Tests
 
         public ProjectDataManagerTests()
         {
-            // Передаем фейковую строку подключения, так как в этих тестах мы не будем реально подключаться к БД
             manager = new ProjectDataManager("Provider=Microsoft.ACE.OLEDB.12.0;Data Source=fake.accdb;");
         }
 

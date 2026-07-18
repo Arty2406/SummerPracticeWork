@@ -8,6 +8,7 @@ using Word = Microsoft.Office.Interop.Word;
 
 namespace SummerPractice
 {
+
     public class ReportResult
     {
         public bool Success { get; set; }
@@ -193,5 +194,5 @@ namespace SummerPractice
                 }
             }
         }
-        }
     }
+}

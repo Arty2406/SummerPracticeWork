@@ -101,7 +101,7 @@ namespace SummerPractice
             Controls.Add(txtLogin);
             Name = "Autentification";
             Text = "Вход в систему";
-            Load += LoginForm_Load;
+            Load += Autentification_Load;
             ResumeLayout(false);
             PerformLayout();
         }

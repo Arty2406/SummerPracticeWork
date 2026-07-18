@@ -11,10 +11,10 @@ namespace SummerPractice
     {
         private static string GetConnectionString()
         {
-            string dbName = "CourseWork.accdb";
+            const string dbName = "CourseWork.accdb";
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
 
-            // Поиск файла в нескольких местах
+            // Поиск файла в нескольких местах (отладочные и релизные папки)
             string[] paths = {
                 Path.Combine(basePath, dbName),
                 Path.Combine(basePath, "..", "..", "..", dbName),
@@ -35,45 +35,55 @@ namespace SummerPractice
             }
 
             if (string.IsNullOrEmpty(dbPath))
-                throw new FileNotFoundException($"Файл БД не найден. Искали в:\n{string.Join("\n", paths)}");
+                throw new FileNotFoundException($"Файл базы данных не найден. Пути поиска:\n{string.Join("\n", paths)}");
 
             return $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};Persist Security Info=False;OLE DB Services = -4;";
         }
 
         private static string HashPassword(string password)
         {
-            using var sha256 = SHA256.Create();
-            byte[] sourceBytes = Encoding.UTF8.GetBytes(password);
-            byte[] hashBytes = sha256.ComputeHash(sourceBytes);
+            if (password == null) return string.Empty;
 
-            var sb = new StringBuilder(hashBytes.Length * 2);
-            foreach (byte b in hashBytes)
-                sb.Append(b.ToString("x2"));
-            return sb.ToString();
+            using (var sha256 = SHA256.Create())
+            {
+                byte[] sourceBytes = Encoding.UTF8.GetBytes(password);
+                byte[] hashBytes = sha256.ComputeHash(sourceBytes);
+
+                var sb = new StringBuilder(hashBytes.Length * 2);
+                foreach (byte b in hashBytes)
+                    sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
         }
 
         public static void RegisterGuest(string login, string pass)
         {
             if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(pass))
-                throw new ArgumentException("Логин и пароль не могут быть пустыми.");
+                throw new ArgumentException("Логин и пароль не могут быть пустыми или состоять из пробелов.");
 
             string connStr = GetConnectionString();
+            string trimmedLogin = login.Trim();
 
-            // Проверка существования пользователя
-            string checkSql = "SELECT COUNT(*) FROM Пользователи WHERE Логин = ?";
-            var result = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql,
-                new[] { new OleDbParameter("?", login) });
+            // 1. Проверяем, существует ли уже такой пользователь
+            string checkSql = "SELECT COUNT(*) FROM [Пользователи] WHERE [Логин] = ?";
 
-            if (result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0][0]) > 0)
-                throw new Exception("Такой логин уже существует.");
+            using (var resultTable = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql, new[] { new OleDbParameter("?", trimmedLogin) }))
+            {
+                if (resultTable != null && resultTable.Rows.Count > 0)
+                {
+                    int count = Convert.ToInt32(resultTable.Rows[0][0]);
+                    if (count > 0)
+                        throw new InvalidOperationException("Пользователь с таким логином уже зарегистрирован.");
+                }
+            }
 
-            // Вставка нового пользователя
+            // 2. Вставляем нового пользователя (строго соблюдая порядок позиционных параметров для OLE DB)
             string hash = HashPassword(pass);
-            string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
+            string insertSql = "INSERT INTO [Пользователи] ([Логин], [Пароль], [Роль]) VALUES (?, ?, ?)";
 
             SafeDatabaseHelper.ExecuteNonQuery(connStr, insertSql,
                 new[] {
-                    new OleDbParameter("?", login),
+                    new OleDbParameter("?", trimmedLogin),
                     new OleDbParameter("?", hash),
                     new OleDbParameter("?", "Гость")
                 });
@@ -84,62 +94,65 @@ namespace SummerPractice
             try
             {
                 string connStr = GetConnectionString();
-                string adminLogin = "AdminArty";
+                const string adminLogin = "AdminArty";
 
-                // Проверяем существование пользователя
-                string checkSql = "SELECT Роль FROM Пользователи WHERE Логин = ?";
-                var result = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql,
-                    new[] { new OleDbParameter("?", adminLogin) });
+                // Проверяем существование администратора по логину
+                string checkSql = "SELECT [Роль] FROM [Пользователи] WHERE [Логин] = ?";
 
-                if (result.Rows.Count == 0)
+                using (var result = SafeDatabaseHelper.ExecuteQuery(connStr, checkSql, new[] { new OleDbParameter("?", adminLogin) }))
                 {
-                    // Создаем администратора
-                    string hash = HashPassword("24062007");
-                    string insertSql = "INSERT INTO Пользователи (Логин, Пароль, Роль) VALUES (?, ?, ?)";
-                    SafeDatabaseHelper.ExecuteNonQuery(connStr, insertSql,
-                        new[] {
-                            new OleDbParameter("?", adminLogin),
-                            new OleDbParameter("?", hash),
-                            new OleDbParameter("?", "Администратор")
-                        });
-                }
-                else
-                {
-                    string currentRole = result.Rows[0]["Роль"]?.ToString();
-                    if (currentRole != "Администратор")
+                    if (result == null || result.Rows.Count == 0)
                     {
-                        string updateSql = "UPDATE Пользователи SET Роль = ? WHERE Логин = ?";
-                        SafeDatabaseHelper.ExecuteNonQuery(connStr, updateSql,
+                        // Администратора нет — создаем новую запись
+                        string hash = HashPassword("24062007");
+                        string insertSql = "INSERT INTO [Пользователи] ([Логин], [Пароль], [Роль]) VALUES (?, ?, ?)";
+
+                        SafeDatabaseHelper.ExecuteNonQuery(connStr, insertSql,
                             new[] {
-                                new OleDbParameter("?", "Администратор"),
-                                new OleDbParameter("?", adminLogin)
+                                new OleDbParameter("?", adminLogin),
+                                new OleDbParameter("?", hash),
+                                new OleDbParameter("?", "Администратор")
                             });
+                    }
+                    else
+                    {
+                        // Пользователь есть. Проверяем, назначена ли ему роль Администратора
+                        string currentRole = result.Rows[0]["Роль"]?.ToString();
+                        if (currentRole != "Администратор")
+                        {
+                            string updateSql = "UPDATE [Пользователи] SET [Роль] = ? WHERE [Логин] = ?";
+
+                            SafeDatabaseHelper.ExecuteNonQuery(connStr, updateSql,
+                                new[] {
+                                    new OleDbParameter("?", "Администратор"),
+                                    new OleDbParameter("?", adminLogin)
+                                });
+                        }
                     }
                 }
             }
-            catch (AccessViolationException ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"AccessViolation in EnsureAdminCreated: {ex.Message}");
-                // Не выбрасываем исключение, чтобы приложение не падало
-            }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"EnsureAdminCreated error: {ex.Message}");
+                // Логируем ошибку, чтобы приложение не упало при первом старте из-за проблем с БД
+                System.Diagnostics.Debug.WriteLine($"[DatabaseManager.EnsureAdminCreated] Ошибка инициализации администратора: {ex.Message}");
             }
         }
 
         public static DataTable GetUserByLogin(string login)
         {
+            if (string.IsNullOrWhiteSpace(login))
+                return new DataTable();
+
             try
             {
                 string connStr = GetConnectionString();
-                string sql = "SELECT Логин, Пароль, Роль FROM Пользователи WHERE Логин = ?";
-                return SafeDatabaseHelper.ExecuteQuery(connStr, sql,
-                    new[] { new OleDbParameter("?", login) });
+                string sql = "SELECT [Логин], [Пароль], [Роль] FROM [Пользователи] WHERE [Логин] = ?";
+
+                return SafeDatabaseHelper.ExecuteQuery(connStr, sql, new[] { new OleDbParameter("?", login.Trim()) });
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"GetUserByLogin error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[DatabaseManager.GetUserByLogin] Ошибка поиска пользователя '{login}': {ex.Message}");
                 return new DataTable();
             }
         }
@@ -152,6 +165,7 @@ namespace SummerPractice
             try
             {
                 string hash = HashPassword(inputPassword);
+                // Используем StringComparison.Ordinal для безопасного побайтового сравнения хэш-строк
                 return string.Equals(hash, storedHash, StringComparison.Ordinal);
             }
             catch

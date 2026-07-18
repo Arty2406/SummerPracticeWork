@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.OleDb;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -14,12 +14,22 @@ namespace SummerPractice
         private bool isAdminMode = false;
         private List<string> primaryKeyColumns = new List<string>();
         private List<LookupInfo> currentLookups = new List<LookupInfo>();
+        private DataTable currentDataTable;
+        private string currentTableName;
         private bool _isShowingValidationError = false;
+        private DataView currentDataView;
 
         public ProjectForm()
         {
             InitializeComponent();
+            InitializeDataManager();
+            SetupDataGridViewEvents();
+        }
 
+        #region Инициализация
+
+        private void InitializeDataManager()
+        {
             string dbName = "CourseWork.accdb";
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
             string dbPath = Path.Combine(basePath, dbName);
@@ -27,7 +37,7 @@ namespace SummerPractice
             if (!File.Exists(dbPath))
             {
                 MessageBox.Show(
-                    $"Файл базы данных не найден по пути:\n{dbPath}\n\nУбедитесь, что файл скопирован в папку bin\\Debug\\netX.X",
+                    $"Файл базы данных не найден по пути:\n{dbPath}",
                     "Ошибка БД", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 this.Close();
                 return;
@@ -35,43 +45,87 @@ namespace SummerPractice
 
             string connStr = $@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={dbPath};";
             dataManager = new ProjectDataManager(connStr);
+        }
 
+        private void SetupDataGridViewEvents()
+        {
             dataGridViewMain.DefaultValuesNeeded += DataGridViewMain_DefaultValuesNeeded;
             dataGridViewMain.CellValidating += DataGridViewMain_CellValidating;
             dataGridViewMain.UserDeletingRow += DataGridViewMain_UserDeletingRow;
             dataGridViewMain.KeyDown += DataGridViewMain_KeyDown;
             dataGridViewMain.DataError += DataGridViewMain_DataError;
+            dataGridViewMain.CellBeginEdit += DataGridViewMain_CellBeginEdit;
+            dataGridViewMain.CellEndEdit += DataGridViewMain_CellEndEdit;
         }
+
+        #endregion
+
+        #region Загрузка формы
 
         private void ProjectForm_Load(object sender, EventArgs e)
         {
             try
             {
-                var tableNames = dataManager.GetTableNames(IsAdmin());
-
-                if (tableNames.Count == 0)
-                {
-                    MessageBox.Show("В базе данных нет доступных вам таблиц.", "Внимание",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                comboBoxTables.DataSource = tableNames;
-                comboBoxTables.SelectedIndex = 0;
+                LoadTablesList();
 
                 if (CurrentUser.IsLoggedIn)
                     this.Text = $"Система для работы с таблицами Access — {CurrentUser.GetDisplayName()}";
+
+                UpdateUIForUserRole();
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Не удалось подключиться к базе данных.\n\nПроверьте:\n1) Файл БД лежит рядом с программой (.exe).\n2) Установлен ли Access Database Engine.\n\nОшибка: {ex.Message}",
-                    "Критическая ошибка подключения", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    $"Не удалось подключиться к базе данных.\n\nОшибка: {ex.Message}",
+                    "Критическая ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 this.Close();
             }
         }
 
+        private void LoadTablesList()
+        {
+            var tableNames = dataManager.GetTableNames(IsAdmin());
+
+            if (tableNames.Count == 0)
+            {
+                MessageBox.Show("В базе данных нет доступных вам таблиц.", "Внимание",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            comboBoxTables.DataSource = tableNames;
+            if (tableNames.Count > 0)
+                comboBoxTables.SelectedIndex = 0;
+        }
+
+        private void UpdateUIForUserRole()
+        {
+            bool isAdmin = IsAdmin();
+
+            btnChange.Visible = isAdmin;
+            btnSave.Visible = isAdmin;
+
+            if (!isAdmin)
+            {
+                btnChange.Text = "Редактирование недоступно";
+                btnChange.Enabled = false;
+                btnSave.Enabled = false;
+            }
+            else
+            {
+                btnChange.Text = "Изменить";
+                btnChange.Enabled = true;
+                btnSave.Enabled = false;
+            }
+        }
+
+        #endregion
+
+        #region Свойства и вспомогательные методы
+
         private bool IsAdmin() => CurrentUser.IsLoggedIn && CurrentUser.IsAdmin;
+
+        private bool HasUnsavedChanges() => currentDataTable?.GetChanges() != null;
 
         private void SafeEndEdit()
         {
@@ -80,224 +134,272 @@ namespace SummerPractice
                 if (dataGridViewMain != null && dataGridViewMain.IsCurrentCellInEditMode)
                     dataGridViewMain.EndEdit();
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"SafeEndEdit error: {ex.Message}");
-            }
+            catch { }
         }
 
-        private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
+        private DataRow GetCurrentDataRow(DataGridViewRow dgvRow)
         {
-            e.ThrowException = false;
-            e.Cancel = true;
+            if (dgvRow.DataBoundItem is DataRowView drv)
+                return drv.Row;
+            return null;
+        }
 
-            if (dataGridViewMain.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn)
+        private bool IsNumericType(Type type)
+        {
+            return type == typeof(int) || type == typeof(long) ||
+                   type == typeof(short) || type == typeof(byte) ||
+                   type == typeof(decimal) || type == typeof(double) ||
+                   type == typeof(float);
+        }
+
+        #endregion
+
+        #region Работа с таблицами
+
+        private void ComboBoxTables_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            if (char.IsLetterOrDigit(e.KeyChar) || char.IsWhiteSpace(e.KeyChar))
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"ComboBox DataError col={dataGridViewMain.Columns[e.ColumnIndex].Name} " +
-                    $"row={e.RowIndex} ctx={e.Context}: {e.Exception?.Message}");
-                return;
+                string searchChar = e.KeyChar.ToString().ToLower();
+
+                int startIndex = comboBoxTables.SelectedIndex + 1;
+                if (startIndex >= comboBoxTables.Items.Count)
+                    startIndex = 0;
+
+                for (int i = startIndex; i < comboBoxTables.Items.Count; i++)
+                {
+                    if (comboBoxTables.Items[i].ToString().ToLower().StartsWith(searchChar))
+                    {
+                        comboBoxTables.SelectedIndex = i;
+                        e.Handled = true;
+                        return;
+                    }
+                }
+
+                for (int i = 0; i < startIndex; i++)
+                {
+                    if (comboBoxTables.Items[i].ToString().ToLower().StartsWith(searchChar))
+                    {
+                        comboBoxTables.SelectedIndex = i;
+                        e.Handled = true;
+                        return;
+                    }
+                }
             }
-
-            if (e.Context.HasFlag(DataGridViewDataErrorContexts.Parsing) ||
-                e.Context.HasFlag(DataGridViewDataErrorContexts.Commit) ||
-                e.Context.HasFlag(DataGridViewDataErrorContexts.LeaveControl))
-                return;
-
-            if (e.Exception != null)
-                MessageBox.Show($"Ошибка данных: {e.Exception.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private void ComboBoxTables_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (comboBoxTables.SelectedItem == null) return;
-            if (comboBoxTables.SelectedItem.ToString() == dataManager.CurrentTableName) return;
+
+            string newTableName = comboBoxTables.SelectedItem.ToString();
+            if (newTableName == currentTableName) return;
 
             SafeEndEdit();
 
-            if (dataManager.HasUnsavedChanges)
+            if (HasUnsavedChanges())
             {
-                var dlgResult = MessageBox.Show(
-                    "Есть несохранённые изменения в текущей таблице. Сохранить их?",
-                    "Несохранённые изменения", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                var result = MessageBox.Show(
+                    "Есть несохранённые изменения. Сохранить их?",
+                    "Несохранённые изменения",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Warning);
 
-                if (dlgResult == DialogResult.Yes)
+                if (result == DialogResult.Yes)
                 {
                     if (!TrySaveChanges()) return;
                 }
-                else if (dlgResult == DialogResult.Cancel)
+                else if (result == DialogResult.Cancel)
                 {
+                    comboBoxTables.SelectedIndexChanged -= ComboBoxTables_SelectedIndexChanged;
+                    comboBoxTables.SelectedItem = currentTableName;
+                    comboBoxTables.SelectedIndexChanged += ComboBoxTables_SelectedIndexChanged;
                     return;
                 }
                 else
                 {
-                    try { dataManager.OriginalTable?.RejectChanges(); } catch { }
+                    currentDataTable?.RejectChanges();
                 }
             }
 
-            string tableName = comboBoxTables.SelectedItem.ToString();
+            LoadTable(newTableName);
+        }
 
+        private void LoadTable(string tableName)
+        {
             try
             {
                 if (isAdminMode)
                     ExitEditModeSilently();
 
+                dataGridViewMain.DataSource = null;
+                dataGridViewMain.Columns.Clear();
+                dataGridViewMain.Rows.Clear();
+
                 dataManager.SelectTable(tableName);
+                currentDataTable = dataManager.OriginalTable;
+                currentTableName = tableName;
+                currentDataView = currentDataTable.DefaultView;
+
                 primaryKeyColumns = dataManager.GetPrimaryKeyColumns();
                 currentLookups = dataManager.GetLookupsForCurrentTable();
 
-                dataGridViewMain.DataSource = null;
-                dataGridViewMain.Columns.Clear();
-                dataGridViewMain.Refresh();
-
-                SetupAllColumns(dataManager.OriginalTable, primaryKeyColumns, currentLookups);
-                dataGridViewMain.DataSource = dataManager.OriginalTable;
-
-                foreach (DataGridViewRow row in dataGridViewMain.Rows)
-                    foreach (DataGridViewCell cell in row.Cells)
-                        cell.ErrorText = "";
-
-                foreach (string pkCol in primaryKeyColumns)
-                {
-                    if (dataGridViewMain.Columns.Contains(pkCol))
-                    {
-                        dataGridViewMain.Columns[pkCol].ReadOnly = true;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
-                            System.Drawing.Color.LightGray;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
-                            System.Drawing.Color.Gray;
-                    }
-                }
-
-                foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-                {
-                    if (col is DataGridViewComboBoxColumn) continue;
-                    if (col.ValueType == typeof(DateTime))
-                        col.DefaultCellStyle.Format = "dd.MM.yyyy";
-                }
-
-                dataGridViewMain.ReadOnly = !isAdminMode;
-                dataGridViewMain.AllowUserToAddRows = isAdminMode;
-                dataGridViewMain.AllowUserToDeleteRows = isAdminMode;
+                SetupColumns();
+                dataGridViewMain.DataSource = currentDataView;
+                ApplyColumnStyles();
+                SetReadOnlyMode(!isAdminMode);
+                UpdateButtonsState();
+                ResetAllFilters();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при чтении таблицы '{tableName}':\n{ex.Message}",
-                    "Ошибка данных", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Ошибка при загрузке таблицы '{tableName}':\n{ex.Message}",
+                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void SetupAllColumns(DataTable table, List<string> pkCols, List<LookupInfo> lookups)
+        private void SetupColumns()
         {
             dataGridViewMain.AutoGenerateColumns = false;
             dataGridViewMain.Columns.Clear();
 
-            foreach (DataColumn dc in table.Columns)
+            foreach (DataColumn dc in currentDataTable.Columns)
             {
-                var lookup = lookups.FirstOrDefault(l =>
-                    l.FkColumn.Equals(dc.ColumnName, StringComparison.OrdinalIgnoreCase));
-
-                DataGridViewColumn col;
-
-                if (lookup != null)
-                {
-                    var comboCol = new DataGridViewComboBoxColumn
-                    {
-                        DataSource = lookup.LookupTable,
-                        ValueMember = "ValueMember",
-                        DisplayMember = "DisplayMember",
-                        DisplayStyleForCurrentCellOnly = true,
-                        FlatStyle = FlatStyle.Flat,
-                        ToolTipText = $"Справочник: {lookup.ParentTable} → {lookup.DisplayColumn}"
-                    };
-                    comboCol.ValueType = dc.DataType;
-                    comboCol.DefaultCellStyle.NullValue = DBNull.Value;
-                    col = comboCol;
-                }
-                else if (dc.DataType == typeof(DateTime))
-                {
-                    col = new DataGridViewTextBoxColumn();
-                    col.DefaultCellStyle.Format = "dd.MM.yyyy";
-                }
-                else
-                {
-                    col = new DataGridViewTextBoxColumn();
-                }
-
-                col.Name = dc.ColumnName;
-                col.HeaderText = dc.ColumnName;
-                col.DataPropertyName = dc.ColumnName;
-                col.ReadOnly = pkCols.Contains(dc.ColumnName);
-
-                if (pkCols.Contains(dc.ColumnName))
-                {
-                    col.DefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
-                    col.DefaultCellStyle.ForeColor = System.Drawing.Color.Gray;
-                }
-
+                DataGridViewColumn col = CreateColumn(dc);
                 dataGridViewMain.Columns.Add(col);
             }
         }
 
-        private void ExitEditModeSilently()
+        private DataGridViewColumn CreateColumn(DataColumn dc)
         {
-            SafeEndEdit();
+            var lookup = currentLookups.FirstOrDefault(l =>
+                l.FkColumn.Equals(dc.ColumnName, StringComparison.OrdinalIgnoreCase));
 
-            if (dataManager.HasUnsavedChanges)
+            DataGridViewColumn col;
+
+            if (lookup != null && lookup.LookupTable != null)
             {
-                try { dataManager.OriginalTable?.RejectChanges(); } catch { }
+                var comboCol = new DataGridViewComboBoxColumn
+                {
+                    DataSource = lookup.LookupTable,
+                    ValueMember = "ValueMember",
+                    DisplayMember = "DisplayMember",
+                    DisplayStyleForCurrentCellOnly = true,
+                    FlatStyle = FlatStyle.Flat,
+                    ValueType = dc.DataType
+                };
+                comboCol.DefaultCellStyle.NullValue = DBNull.Value;
+                col = comboCol;
+            }
+            else if (dc.DataType == typeof(DateTime))
+            {
+                col = new DataGridViewTextBoxColumn();
+                col.DefaultCellStyle.Format = "dd.MM.yyyy";
+            }
+            else
+            {
+                col = new DataGridViewTextBoxColumn();
             }
 
-            isAdminMode = false;
-            dataGridViewMain.ReadOnly = true;
-            dataGridViewMain.AllowUserToAddRows = false;
-            dataGridViewMain.AllowUserToDeleteRows = false;
+            col.Name = dc.ColumnName;
+            col.HeaderText = dc.ColumnName;
+            col.DataPropertyName = dc.ColumnName;
+            col.ReadOnly = primaryKeyColumns.Contains(dc.ColumnName);
 
-            btnChange.Text = "Изменить";
-            btnChange.BackColor = System.Drawing.SystemColors.Control;
-            btnChange.ForeColor = System.Drawing.SystemColors.ControlText;
-
-            UpdateComboBoxColumnsReadOnly(readOnly: true);
+            return col;
         }
 
-        private void UpdateComboBoxColumnsReadOnly(bool readOnly)
+        private void ApplyColumnStyles()
         {
+            foreach (string pkCol in primaryKeyColumns)
+            {
+                if (dataGridViewMain.Columns.Contains(pkCol))
+                {
+                    dataGridViewMain.Columns[pkCol].ReadOnly = true;
+                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor = Color.LightGray;
+                    dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor = Color.Gray;
+                }
+            }
+
+            foreach (DataGridViewColumn col in dataGridViewMain.Columns)
+            {
+                if (col is DataGridViewComboBoxColumn) continue;
+                if (col.ValueType == typeof(DateTime))
+                    col.DefaultCellStyle.Format = "dd.MM.yyyy";
+            }
+        }
+
+        private void SetReadOnlyMode(bool readOnly)
+        {
+            dataGridViewMain.ReadOnly = readOnly;
+            dataGridViewMain.AllowUserToAddRows = !readOnly && isAdminMode;
+            dataGridViewMain.AllowUserToDeleteRows = !readOnly && isAdminMode;
+
             foreach (DataGridViewColumn col in dataGridViewMain.Columns)
             {
                 if (col is DataGridViewComboBoxColumn)
-                    col.ReadOnly = primaryKeyColumns.Contains(col.Name) ? true : readOnly;
+                {
+                    bool isPk = primaryKeyColumns?.Contains(col.Name) ?? false;
+                    col.ReadOnly = isPk || readOnly;
+                }
             }
         }
 
-        private void btnExitToMain_Click(object sender, EventArgs e)
+        private void UpdateButtonsState()
         {
-            var result = MessageBox.Show(
-                "Вернуться в главное меню?\n\nВы будете разлогинены и вернётесь к форме входа.",
-                "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            btnSave.Enabled = isAdminMode && HasUnsavedChanges();
 
-            if (result == DialogResult.Yes)
+            if (IsAdmin())
             {
-                CurrentUser.Logout();
-                this.Close();
+                btnChange.Enabled = true;
+                btnChange.Text = isAdminMode ? "Завершить редактирование" : "Изменить";
+                btnChange.BackColor = isAdminMode ? Color.OrangeRed : SystemColors.Control;
+                btnChange.ForeColor = isAdminMode ? Color.White : SystemColors.ControlText;
             }
         }
 
-        #region Изменение таблицы
+        private void ResetAllFilters()
+        {
+            if (currentDataView != null)
+            {
+                currentDataView.RowFilter = "";
+                currentDataView.Sort = "";
+            }
+
+            foreach (DataGridViewColumn col in dataGridViewMain.Columns)
+                col.Visible = true;
+
+            foreach (DataGridViewRow row in dataGridViewMain.Rows)
+                row.Visible = true;
+        }
+
+        #endregion
+
+        #region Режим редактирования
 
         private void btnChange_Click(object sender, EventArgs e)
         {
             if (!IsAdmin())
             {
                 MessageBox.Show(
-                    "Эта функция доступна только администратору.\n\nВойдите под учётной записью администратора.",
+                    "Эта функция доступна только администратору.",
                     "Доступ запрещён", MessageBoxButtons.OK, MessageBoxIcon.Stop);
                 return;
             }
 
-            if (isAdminMode) { ExitEditMode(); return; }
+            if (isAdminMode)
+            {
+                ExitEditMode();
+            }
+            else
+            {
+                EnterEditMode();
+            }
+        }
 
-            if (dataManager?.OriginalTable == null)
+        private void EnterEditMode()
+        {
+            if (currentDataTable == null)
             {
                 MessageBox.Show("Данные таблицы не загружены.", "Ошибка",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -307,64 +409,24 @@ namespace SummerPractice
             try
             {
                 SafeEndEdit();
-                ResetAllViewStates();
-                dataManager.ResetAll();
-                dataManager.LoadForeignKeys();
-
-                currentLookups = dataManager.GetLookupsForCurrentTable();
-
-                dataGridViewMain.DataSource = null;
-                dataGridViewMain.Columns.Clear();
-
-                if (dataManager.OriginalTable != null)
-                {
-                    dataManager.OriginalTable.DefaultView.RowFilter = "";
-                    dataManager.OriginalTable.DefaultView.Sort = "";
-                }
-
-                SetupAllColumns(dataManager.OriginalTable,
-                    primaryKeyColumns ?? new List<string>(),
-                    currentLookups ?? new List<LookupInfo>());
-
-                dataGridViewMain.DataSource = dataManager.OriginalTable;
+                ResetAllFilters();
 
                 isAdminMode = true;
-                dataGridViewMain.ReadOnly = false;
-                dataGridViewMain.AllowUserToAddRows = true;
-                dataGridViewMain.AllowUserToDeleteRows = true;
-
-                UpdateComboBoxColumnsReadOnly(readOnly: false);
-
-                foreach (string pkCol in primaryKeyColumns)
-                {
-                    if (dataGridViewMain.Columns.Contains(pkCol))
-                    {
-                        dataGridViewMain.Columns[pkCol].ReadOnly = true;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.BackColor =
-                            System.Drawing.Color.LightGray;
-                        dataGridViewMain.Columns[pkCol].DefaultCellStyle.ForeColor =
-                            System.Drawing.Color.Gray;
-                    }
-                }
-
-                btnChange.Text = "Завершить редактирование";
-                btnChange.BackColor = System.Drawing.Color.OrangeRed;
-                btnChange.ForeColor = System.Drawing.Color.White;
+                SetReadOnlyMode(false);
+                UpdateButtonsState();
 
                 MessageBox.Show(
                     "Режим редактирования включён.\n\n" +
-                    "• Для изменения значения — кликните по ячейке и введите новое.\n" +
+                    "• Для изменения значения — кликните по ячейке.\n" +
                     "• Для FK-столбцов — выбор из выпадающего списка.\n" +
                     "• Для добавления строки — перейдите в последнюю пустую строку.\n" +
                     "• Для удаления строки — выделите её и нажмите Delete.\n" +
-                    "• После изменений нажмите «Сохранить».\n\n" +
-                    "Внимание: учитываются связи между таблицами!",
+                    "• После изменений нажмите «Сохранить».",
                     "Режим редактирования", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    $"Ошибка при переключении в режим редактирования:\n{ex.Message}",
+                MessageBox.Show($"Ошибка при включении режима редактирования:\n{ex.Message}",
                     "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -373,11 +435,13 @@ namespace SummerPractice
         {
             SafeEndEdit();
 
-            if (dataManager.HasUnsavedChanges)
+            if (HasUnsavedChanges())
             {
                 var result = MessageBox.Show(
-                    "Есть несохранённые изменения. Сохранить их перед выходом?",
-                    "Несохранённые изменения", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                    "Есть несохранённые изменения. Сохранить их?",
+                    "Несохранённые изменения",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Warning);
 
                 if (result == DialogResult.Yes)
                 {
@@ -389,23 +453,445 @@ namespace SummerPractice
                 }
                 else
                 {
-                    try { dataManager.OriginalTable?.RejectChanges(); } catch { }
+                    currentDataTable?.RejectChanges();
                 }
             }
 
+            ExitEditModeSilently();
+        }
+
+        private void ExitEditModeSilently()
+        {
+            SafeEndEdit();
+
             isAdminMode = false;
-            dataGridViewMain.ReadOnly = true;
-            dataGridViewMain.AllowUserToAddRows = false;
-            dataGridViewMain.AllowUserToDeleteRows = false;
+            SetReadOnlyMode(true);
+            UpdateButtonsState();
 
-            UpdateComboBoxColumnsReadOnly(readOnly: true);
+            if (currentDataTable != null)
+            {
+                dataGridViewMain.DataSource = currentDataTable.DefaultView;
+            }
+        }
 
-            btnChange.Text = "Изменить";
-            btnChange.BackColor = System.Drawing.SystemColors.Control;
-            btnChange.ForeColor = System.Drawing.SystemColors.ControlText;
+        #endregion
 
-            MessageBox.Show("Режим редактирования завершён.", "Готово",
+        #region Сохранение
+
+        private void btnSave_Click(object sender, EventArgs e)
+        {
+            if (!isAdminMode)
+            {
+                MessageBox.Show("Сначала включите режим редактирования.",
+                    "Внимание", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            TrySaveChanges();
+        }
+
+        private bool TrySaveChanges()
+        {
+            SafeEndEdit();
+
+            if (!ValidateRelationships())
+                return false;
+
+            var result = dataManager.TrySaveChanges();
+
+            if (result.Success)
+            {
+                MessageBox.Show("Изменения успешно сохранены.",
+                    "Сохранение", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                UpdateButtonsState();
+                return true;
+            }
+            else
+            {
+                MessageBox.Show($"Ошибка сохранения:\n{result.ErrorMessage}",
+                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
+        private bool ValidateRelationships()
+        {
+            if (currentDataTable == null) return true;
+
+            DataTable changes = currentDataTable.GetChanges();
+            if (changes == null) return true;
+
+            foreach (DataRow row in changes.Rows)
+            {
+                if (row.RowState == DataRowState.Deleted)
+                {
+                    var violations = dataManager.CheckForeignKeyViolations(row);
+                    if (violations.Count > 0)
+                    {
+                        MessageBox.Show(
+                            "Нельзя удалить запись — существуют связанные данные:\n\n" +
+                            string.Join("\n", violations),
+                            "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        #endregion
+
+        #region Поиск
+
+        private void btnSearch_Click(object sender, EventArgs e)
+        {
+            if (currentDataTable == null)
+            {
+                MessageBox.Show("Сначала выберите таблицу.", "Внимание",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            SafeEndEdit();
+
+            using var searchDialog = CreateSearchDialog();
+
+            if (searchDialog.ShowDialog() == DialogResult.OK)
+            {
+                var txtSearch = searchDialog.Controls.Find("txtSearch", true).FirstOrDefault() as TextBox;
+                var cmbColumn = searchDialog.Controls.Find("cmbColumn", true).FirstOrDefault() as ComboBox;
+
+                string searchText = txtSearch?.Text.Trim() ?? string.Empty;
+                string columnName = cmbColumn?.SelectedItem?.ToString() ?? "Все столбцы";
+
+                if (string.IsNullOrWhiteSpace(searchText))
+                {
+                    MessageBox.Show("Введите текст для поиска.", "Внимание",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                PerformSearch(searchText, columnName);
+            }
+        }
+
+        private Form CreateSearchDialog()
+        {
+            var dialog = new Form
+            {
+                Text = "Поиск по таблице",
+                Size = new Size(400, 230),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var lblSearch = new Label
+            {
+                Text = "Введите текст или число:",
+                Location = new Point(15, 15),
+                AutoSize = true
+            };
+
+            var txtSearch = new TextBox
+            {
+                Name = "txtSearch",
+                Location = new Point(15, 40),
+                Width = 350
+            };
+
+            var lblCol = new Label
+            {
+                Text = "Искать в:",
+                Location = new Point(15, 75),
+                AutoSize = true
+            };
+
+            var cmbColumn = new ComboBox
+            {
+                Name = "cmbColumn",
+                Location = new Point(15, 95),
+                Width = 350,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            cmbColumn.Items.Add("Все столбцы");
+            foreach (DataGridViewColumn col in dataGridViewMain.Columns)
+            {
+                if (col.Visible && currentDataTable.Columns.Contains(col.Name))
+                    cmbColumn.Items.Add(col.Name);
+            }
+            cmbColumn.SelectedIndex = 0;
+
+            var btnOk = new Button
+            {
+                Text = "Найти",
+                DialogResult = DialogResult.OK,
+                Location = new Point(60, 140),
+                Width = 90,
+                Height = 30
+            };
+
+            var btnReset = new Button
+            {
+                Text = "Сбросить",
+                Location = new Point(160, 140),
+                Width = 110,
+                Height = 30
+            };
+
+            var btnCancel = new Button
+            {
+                Text = "Отмена",
+                DialogResult = DialogResult.Cancel,
+                Location = new Point(280, 140),
+                Width = 90,
+                Height = 30
+            };
+
+            dialog.Controls.AddRange(new Control[] {
+                lblSearch, txtSearch, lblCol, cmbColumn,
+                btnOk, btnReset, btnCancel
+            });
+
+            dialog.AcceptButton = btnOk;
+            dialog.CancelButton = btnCancel;
+
+            btnReset.Click += (s, ev) =>
+            {
+                ResetSearch();
+                dialog.Close();
+            };
+
+            return dialog;
+        }
+
+        private void PerformSearch(string searchText, string columnName)
+        {
+            if (currentDataView == null) return;
+
+            var conditions = new List<string>();
+            string escapedText = searchText.Replace("'", "''");
+
+            bool isNumber = decimal.TryParse(searchText,
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out decimal numValue);
+
+            bool isDate = DateTime.TryParse(searchText, out DateTime dateValue);
+
+            IEnumerable<DataColumn> colsToSearch = columnName == "Все столбцы"
+                ? currentDataTable.Columns.Cast<DataColumn>()
+                : currentDataTable.Columns.Cast<DataColumn>()
+                    .Where(c => c.ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase));
+
+            foreach (DataColumn col in colsToSearch)
+            {
+                if (col.DataType == typeof(string))
+                {
+                    conditions.Add($"[{col.ColumnName}] LIKE '*{escapedText}*'");
+                }
+                else if (IsNumericType(col.DataType) && isNumber)
+                {
+                    string numStr = numValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    conditions.Add($"[{col.ColumnName}] = {numStr}");
+                }
+                else if (col.DataType == typeof(DateTime) && isDate)
+                {
+                    conditions.Add($"[{col.ColumnName}] = #{dateValue:yyyy-MM-dd}#");
+                }
+            }
+
+            if (conditions.Count == 0)
+            {
+                MessageBox.Show("Поиск не дал результатов.", "Внимание",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            currentDataView.RowFilter = string.Join(" OR ", conditions);
+            int count = currentDataView.Count;
+
+            MessageBox.Show($"Найдено записей: {count}", "Результаты поиска",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ResetSearch()
+        {
+            try
+            {
+                if (currentDataView != null)
+                    currentDataView.RowFilter = "";
+
+                MessageBox.Show("Поиск сброшен.", "Готово",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка сброса поиска: {ex.Message}", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        #endregion
+
+        #region Сортировка
+
+        private void btnSort_Click(object sender, EventArgs e)
+        {
+            if (currentDataTable == null)
+            {
+                MessageBox.Show("Сначала выберите таблицу.", "Внимание",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            SafeEndEdit();
+
+            using var sortDialog = CreateSortDialog();
+
+            if (sortDialog.ShowDialog() == DialogResult.OK)
+            {
+                var cmbColumn = sortDialog.Controls.Find("cmbColumn", true).FirstOrDefault() as ComboBox;
+                var rbAscending = sortDialog.Controls.Find("rbAscending", true).FirstOrDefault() as RadioButton;
+
+                if (cmbColumn?.SelectedItem == null)
+                {
+                    MessageBox.Show("Выберите столбец для сортировки.", "Внимание",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string columnName = cmbColumn.SelectedItem.ToString();
+                bool ascending = rbAscending?.Checked ?? true;
+
+                try
+                {
+                    string sortDirection = ascending ? "ASC" : "DESC";
+                    currentDataView.Sort = $"[{columnName}] {sortDirection}";
+
+                    string dir = ascending ? "по возрастанию" : "по убыванию";
+                    MessageBox.Show($"Таблица отсортирована по столбцу '{columnName}' {dir}.",
+                        "Сортировка применена", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Ошибка при сортировке:\n{ex.Message}", "Ошибка",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private Form CreateSortDialog()
+        {
+            var dialog = new Form
+            {
+                Text = "Сортировка таблицы",
+                Size = new Size(460, 300),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var grpColumn = new GroupBox
+            {
+                Text = "Выберите столбец для сортировки:",
+                Location = new Point(15, 10),
+                Size = new Size(415, 80)
+            };
+
+            var cmbColumn = new ComboBox
+            {
+                Name = "cmbColumn",
+                Location = new Point(15, 30),
+                Width = 385,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            foreach (DataGridViewColumn dgvCol in dataGridViewMain.Columns)
+            {
+                if (dgvCol.Visible && currentDataTable.Columns.Contains(dgvCol.Name))
+                    cmbColumn.Items.Add(dgvCol.Name);
+            }
+            if (cmbColumn.Items.Count > 0) cmbColumn.SelectedIndex = 0;
+
+            grpColumn.Controls.Add(cmbColumn);
+
+            var grpSortType = new GroupBox
+            {
+                Text = "Тип сортировки:",
+                Location = new Point(15, 100),
+                Size = new Size(415, 90)
+            };
+
+            var rbAscending = new RadioButton
+            {
+                Name = "rbAscending",
+                Text = "По возрастанию (А→Я, 0→9)",
+                Location = new Point(15, 30),
+                AutoSize = true,
+                Checked = true
+            };
+
+            var rbDescending = new RadioButton
+            {
+                Text = "По убыванию (Я→А, 9→0)",
+                Location = new Point(15, 60),
+                AutoSize = true
+            };
+
+            grpSortType.Controls.AddRange(new Control[] { rbAscending, rbDescending });
+
+            var btnApply = new Button
+            {
+                Text = "Применить",
+                DialogResult = DialogResult.OK,
+                Location = new Point(70, 210),
+                Size = new Size(110, 35)
+            };
+
+            var btnReset = new Button
+            {
+                Text = "Сбросить сортировку",
+                Location = new Point(190, 210),
+                Size = new Size(130, 35)
+            };
+
+            var btnCancel = new Button
+            {
+                Text = "Отмена",
+                DialogResult = DialogResult.Cancel,
+                Location = new Point(330, 210),
+                Size = new Size(110, 35)
+            };
+
+            dialog.Controls.AddRange(new Control[] { grpColumn, grpSortType, btnApply, btnReset, btnCancel });
+            dialog.AcceptButton = btnApply;
+            dialog.CancelButton = btnCancel;
+
+            btnReset.Click += (s, ev) => { ResetSort(); dialog.Close(); };
+
+            return dialog;
+        }
+
+        private void ResetSort()
+        {
+            try
+            {
+                if (currentDataView != null)
+                    currentDataView.Sort = "";
+
+                MessageBox.Show("Сортировка сброшена.", "Готово",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка сброса сортировки: {ex.Message}", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         #endregion
@@ -414,7 +900,7 @@ namespace SummerPractice
 
         private void btnFilter_Click(object sender, EventArgs e)
         {
-            if (dataManager.OriginalTable == null)
+            if (currentDataTable == null)
             {
                 MessageBox.Show("Сначала выберите таблицу.", "Внимание",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -447,7 +933,7 @@ namespace SummerPractice
                 }
 
                 fromRow = Math.Max(1, fromRow);
-                toRow = Math.Min(dataManager.OriginalTable.Rows.Count, toRow);
+                toRow = Math.Min(currentDataTable.Rows.Count, toRow);
 
                 if (fromRow > toRow)
                 {
@@ -465,7 +951,7 @@ namespace SummerPractice
             var dialog = new Form
             {
                 Text = "Фильтр таблицы",
-                Size = new System.Drawing.Size(480, 520),
+                Size = new Size(480, 520),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -475,26 +961,26 @@ namespace SummerPractice
             var grpColumns = new GroupBox
             {
                 Text = "Выберите столбцы для отображения:",
-                Location = new System.Drawing.Point(15, 10),
-                Size = new System.Drawing.Size(435, 300)
+                Location = new Point(15, 10),
+                Size = new Size(435, 300)
             };
 
             var checkedListBox = new CheckedListBox
             {
                 Name = "checkedListBoxColumns",
-                Location = new System.Drawing.Point(15, 25),
-                Size = new System.Drawing.Size(405, 220),
+                Location = new Point(15, 25),
+                Size = new Size(405, 220),
                 CheckOnClick = true
             };
 
-            foreach (DataColumn col in dataManager.OriginalTable.Columns)
+            foreach (DataColumn col in currentDataTable.Columns)
                 checkedListBox.Items.Add(col.ColumnName, true);
 
             var btnSelectAll = new Button
             {
                 Text = "Выбрать все",
-                Location = new System.Drawing.Point(15, 255),
-                Size = new System.Drawing.Size(130, 30)
+                Location = new Point(15, 255),
+                Size = new Size(130, 30)
             };
             btnSelectAll.Click += (s, ev) =>
             {
@@ -505,8 +991,8 @@ namespace SummerPractice
             var btnDeselectAll = new Button
             {
                 Text = "Снять все",
-                Location = new System.Drawing.Point(155, 255),
-                Size = new System.Drawing.Size(130, 30)
+                Location = new Point(155, 255),
+                Size = new Size(130, 30)
             };
             btnDeselectAll.Click += (s, ev) =>
             {
@@ -519,20 +1005,20 @@ namespace SummerPractice
             var grpRows = new GroupBox
             {
                 Text = "Диапазон строк:",
-                Location = new System.Drawing.Point(15, 320),
-                Size = new System.Drawing.Size(435, 80)
+                Location = new Point(15, 320),
+                Size = new Size(435, 80)
             };
 
-            var lblFrom = new Label { Text = "С:", Location = new System.Drawing.Point(15, 30), AutoSize = true };
-            var txtFrom = new TextBox { Name = "txtFrom", Text = "1", Location = new System.Drawing.Point(40, 27), Width = 70 };
-            var lblTo = new Label { Text = "По:", Location = new System.Drawing.Point(120, 30), AutoSize = true };
-            var txtTo = new TextBox { Name = "txtTo", Text = dataManager.OriginalTable.Rows.Count.ToString(), Location = new System.Drawing.Point(160, 27), Width = 70 };
+            var lblFrom = new Label { Text = "С:", Location = new Point(15, 30), AutoSize = true };
+            var txtFrom = new TextBox { Name = "txtFrom", Text = "1", Location = new Point(40, 27), Width = 70 };
+            var lblTo = new Label { Text = "По:", Location = new Point(120, 30), AutoSize = true };
+            var txtTo = new TextBox { Name = "txtTo", Text = currentDataTable.Rows.Count.ToString(), Location = new Point(160, 27), Width = 70 };
             var lblInfo = new Label
             {
-                Text = $"Всего строк: {dataManager.OriginalTable.Rows.Count}",
-                Location = new System.Drawing.Point(260, 30),
+                Text = $"Всего строк: {currentDataTable.Rows.Count}",
+                Location = new Point(260, 30),
                 AutoSize = true,
-                ForeColor = System.Drawing.Color.Gray
+                ForeColor = Color.Gray
             };
 
             grpRows.Controls.AddRange(new Control[] { lblFrom, txtFrom, lblTo, txtTo, lblInfo });
@@ -541,22 +1027,22 @@ namespace SummerPractice
             {
                 Text = "Применить",
                 DialogResult = DialogResult.OK,
-                Location = new System.Drawing.Point(70, 420),
-                Size = new System.Drawing.Size(100, 35)
+                Location = new Point(70, 420),
+                Size = new Size(100, 35)
             };
             var btnReset = new Button
             {
                 Text = "Сбросить фильтр",
-                Location = new System.Drawing.Point(190, 420),
-                Size = new System.Drawing.Size(120, 35)
+                Location = new Point(190, 420),
+                Size = new Size(120, 35)
             };
             btnReset.Click += (s, ev) => { ResetFilter(); dialog.Close(); };
             var btnCancel = new Button
             {
                 Text = "Отмена",
                 DialogResult = DialogResult.Cancel,
-                Location = new System.Drawing.Point(320, 420),
-                Size = new System.Drawing.Size(100, 35)
+                Location = new Point(320, 420),
+                Size = new Size(100, 35)
             };
 
             dialog.Controls.AddRange(new Control[] { grpColumns, grpRows, btnApply, btnReset, btnCancel });
@@ -569,15 +1055,10 @@ namespace SummerPractice
         {
             try
             {
-                SafeEndEdit();
-
-                if (dataGridViewMain.DataSource is DataView)
-                    dataGridViewMain.DataSource = dataManager.OriginalTable;
-
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-                    try { col.Visible = true; } catch { }
+                    col.Visible = true;
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
-                    try { row.Visible = true; } catch { }
+                    row.Visible = true;
 
                 var selectedColumns = new HashSet<string>();
                 foreach (var item in checkedListBox.CheckedItems)
@@ -592,11 +1073,9 @@ namespace SummerPractice
                     var row = dataGridViewMain.Rows[i];
                     if (row.IsNewRow) continue;
                     bool isVisible = (i + 1 >= fromRow && i + 1 <= toRow);
-                    try { row.Visible = isVisible; } catch { }
+                    row.Visible = isVisible;
                     if (isVisible) visibleCount++;
                 }
-
-                dataManager.MarkFiltered();
 
                 MessageBox.Show(
                     $"Применён фильтр:\n• Столбцов: {selectedColumns.Count}\n• Строк: {visibleCount} (с {fromRow} по {toRow})",
@@ -614,9 +1093,12 @@ namespace SummerPractice
             try
             {
                 foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-                    try { col.Visible = true; } catch { }
+                    col.Visible = true;
                 foreach (DataGridViewRow row in dataGridViewMain.Rows)
-                    try { row.Visible = true; } catch { }
+                    row.Visible = true;
+
+                MessageBox.Show("Фильтр сброшен.", "Готово",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -627,350 +1109,14 @@ namespace SummerPractice
 
         #endregion
 
-        #region Сортировка
-
-        private void btnSort_Click(object sender, EventArgs e)
-        {
-            if (dataGridViewMain.DataSource == null || dataManager.OriginalTable == null)
-            {
-                MessageBox.Show("Сначала выберите таблицу.", "Внимание",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            SafeEndEdit();
-
-            using var sortDialog = CreateSortDialog();
-
-            if (sortDialog.ShowDialog() == DialogResult.OK)
-            {
-                var cmbColumn = sortDialog.Controls.Find("cmbColumn", true)[0] as ComboBox;
-                var rbAscending = sortDialog.Controls.Find("rbAscending", true)[0] as RadioButton;
-
-                if (cmbColumn.SelectedItem == null)
-                {
-                    MessageBox.Show("Выберите столбец для сортировки.", "Внимание",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                string columnName = cmbColumn.SelectedItem.ToString();
-                bool ascending = rbAscending.Checked;
-
-                try
-                {
-                    DataView dv = dataManager.ApplySort(columnName, ascending);
-                    dataGridViewMain.DataSource = dv;
-
-                    string dir = ascending ? "по возрастанию" : "по убыванию";
-                    MessageBox.Show($"Таблица отсортирована по столбцу '{columnName}' {dir}.",
-                        "Сортировка применена", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Ошибка при сортировке:\n{ex.Message}", "Ошибка",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-        }
-
-        private Form CreateSortDialog()
-        {
-            var dialog = new Form
-            {
-                Text = "Сортировка таблицы",
-                Size = new System.Drawing.Size(460, 340),
-                StartPosition = FormStartPosition.CenterParent,
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false,
-                MinimizeBox = false
-            };
-
-            var grpColumn = new GroupBox
-            {
-                Text = "Выберите столбец для сортировки:",
-                Location = new System.Drawing.Point(15, 10),
-                Size = new System.Drawing.Size(415, 110)
-            };
-
-            var cmbColumn = new ComboBox
-            {
-                Name = "cmbColumn",
-                Location = new System.Drawing.Point(15, 30),
-                Width = 385,
-                DropDownStyle = ComboBoxStyle.DropDownList
-            };
-
-            var lblType = new Label
-            {
-                Text = "Тип данных: (не выбрано)",
-                Location = new System.Drawing.Point(15, 70),
-                AutoSize = true,
-                Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F,
-                                System.Drawing.FontStyle.Bold),
-                ForeColor = System.Drawing.Color.DarkBlue
-            };
-
-            foreach (DataGridViewColumn dgvCol in dataGridViewMain.Columns)
-            {
-                if (dgvCol.Visible && dataManager.OriginalTable.Columns.Contains(dgvCol.Name))
-                    cmbColumn.Items.Add(dgvCol.Name);
-            }
-            if (cmbColumn.Items.Count > 0) cmbColumn.SelectedIndex = 0;
-
-            grpColumn.Controls.AddRange(new Control[] { cmbColumn, lblType });
-
-            var grpSortType = new GroupBox
-            {
-                Text = "Тип сортировки:",
-                Location = new System.Drawing.Point(15, 130),
-                Size = new System.Drawing.Size(415, 100)
-            };
-
-            var rbAscending = new RadioButton { Name = "rbAscending", Text = "По возрастанию (А→Я, 0→9)", Location = new System.Drawing.Point(15, 30), AutoSize = true, Checked = true };
-            var rbDescending = new RadioButton { Text = "По убыванию (Я→А, 9→0)", Location = new System.Drawing.Point(15, 60), AutoSize = true };
-
-            grpSortType.Controls.AddRange(new Control[] { rbAscending, rbDescending });
-
-            var btnApply = new Button { Text = "Применить", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(70, 250), Size = new System.Drawing.Size(110, 35) };
-            var btnReset = new Button { Text = "Сбросить сортировку", Location = new System.Drawing.Point(190, 250), Size = new System.Drawing.Size(130, 35) };
-            btnReset.Click += (s, ev) => { ResetSort(); dialog.Close(); };
-            var btnCancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(330, 250), Size = new System.Drawing.Size(110, 35) };
-
-            dialog.Controls.AddRange(new Control[] { grpColumn, grpSortType, btnApply, btnReset, btnCancel });
-            dialog.AcceptButton = btnApply;
-            dialog.CancelButton = btnCancel;
-
-            cmbColumn.SelectedIndexChanged += (s, ev) =>
-            {
-                if (cmbColumn.SelectedItem == null) return;
-                string colName = cmbColumn.SelectedItem.ToString();
-                if (dataManager.OriginalTable.Columns.Contains(colName))
-                {
-                    var col = dataManager.OriginalTable.Columns[colName];
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(GetActualColumnType(col))}";
-                }
-            };
-
-            if (cmbColumn.Items.Count > 0)
-            {
-                string colName = cmbColumn.SelectedItem.ToString();
-                if (dataManager.OriginalTable.Columns.Contains(colName))
-                {
-                    var col = dataManager.OriginalTable.Columns[colName];
-                    lblType.Text = $"Тип данных: {GetDataTypeDescription(GetActualColumnType(col))}";
-                }
-            }
-
-            return dialog;
-        }
-
-        private void ResetSort()
-        {
-            try
-            {
-                if (dataGridViewMain.DataSource is DataView dv) dv.Sort = "";
-                dataManager.ResetSort();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка сброса сортировки: {ex.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        #endregion
-
-        #region Поиск
-
-        private void btnSearch_Click(object sender, EventArgs e)
-        {
-            if (dataManager.OriginalTable == null)
-            {
-                MessageBox.Show("Сначала выберите таблицу.", "Внимание",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            SafeEndEdit();
-
-            using var searchDialog = CreateSearchDialog();
-
-            if (searchDialog.ShowDialog() == DialogResult.OK)
-            {
-                var txtSearch = searchDialog.Controls.Find("txtSearch", true)[0] as TextBox;
-                var cmbColumn = searchDialog.Controls.Find("cmbColumn", true)[0] as ComboBox;
-                string searchText = txtSearch.Text.Trim();
-                string columnName = cmbColumn.SelectedItem.ToString();
-
-                if (string.IsNullOrWhiteSpace(searchText))
-                {
-                    MessageBox.Show("Введите текст для поиска.", "Внимание",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                try
-                {
-                    DataView dv = dataManager.PerformSearch(searchText, columnName);
-
-                    if (dv == null)
-                    {
-                        MessageBox.Show("Поиск не дал результатов.", "Внимание",
-                            MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        return;
-                    }
-
-                    dataGridViewMain.DataSource = dv;
-                    MessageBox.Show($"Найдено записей: {dv.Count}", "Результаты поиска",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Ошибка при поиске:\n{ex.Message}", "Ошибка",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-        }
-
-        private Form CreateSearchDialog()
-        {
-            var dialog = new Form
-            {
-                Text = "Поиск по таблице",
-                Size = new System.Drawing.Size(400, 230),
-                StartPosition = FormStartPosition.CenterParent,
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false,
-                MinimizeBox = false
-            };
-
-            var lblSearch = new Label { Text = "Введите текст или число:", Location = new System.Drawing.Point(15, 15), AutoSize = true };
-            var txtSearch = new TextBox { Name = "txtSearch", Location = new System.Drawing.Point(15, 40), Width = 350 };
-            var lblCol = new Label { Text = "Искать в:", Location = new System.Drawing.Point(15, 75), AutoSize = true };
-            var cmbColumn = new ComboBox
-            {
-                Name = "cmbColumn",
-                Location = new System.Drawing.Point(15, 95),
-                Width = 350,
-                DropDownStyle = ComboBoxStyle.DropDownList
-            };
-
-            cmbColumn.Items.Add("Все столбцы");
-            foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-            {
-                if (col.Visible && dataManager.OriginalTable.Columns.Contains(col.Name))
-                    cmbColumn.Items.Add(col.Name);
-            }
-            cmbColumn.SelectedIndex = 0;
-
-            var btnOk = new Button { Text = "Найти", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(60, 140), Width = 90, Height = 30 };
-            var btnReset = new Button { Text = "Сбросить", Location = new System.Drawing.Point(160, 140), Width = 110, Height = 30 };
-            btnReset.Click += (s, ev) => { ResetSearch(); dialog.Close(); };
-            var btnCancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(280, 140), Width = 90, Height = 30 };
-
-            dialog.Controls.AddRange(new Control[] { lblSearch, txtSearch, lblCol, cmbColumn, btnOk, btnReset, btnCancel });
-            dialog.AcceptButton = btnOk;
-            dialog.CancelButton = btnCancel;
-            return dialog;
-        }
-
-        private void ResetSearch()
-        {
-            try
-            {
-                if (dataGridViewMain.DataSource is DataView dv) dv.RowFilter = "";
-                dataManager.ResetSearch();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка сброса поиска: {ex.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        #endregion
-
-        #region Полный сброс
-
-        private void ResetAllViewStates()
-        {
-            try
-            {
-                SafeEndEdit();
-                if (dataGridViewMain == null) return;
-
-                if (dataGridViewMain.DataSource is DataView dv)
-                    dv.RowFilter = "";
-                else if (dataManager?.OriginalTable != null)
-                    dataGridViewMain.DataSource = dataManager.OriginalTable;
-
-                foreach (DataGridViewColumn col in dataGridViewMain.Columns)
-                    try { col.Visible = true; } catch { }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка сброса: {ex.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        #endregion
-
-        #region Сохранение
-
-        private void btnSave_Click(object sender, EventArgs e)
-        {
-            if (!isAdminMode)
-            {
-                MessageBox.Show("Сначала включите режим редактирования (кнопка «Изменить»).",
-                    "Внимание", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (TrySaveChanges())
-            {
-                isAdminMode = false;
-                dataGridViewMain.ReadOnly = true;
-                dataGridViewMain.AllowUserToAddRows = false;
-                dataGridViewMain.AllowUserToDeleteRows = false;
-                UpdateComboBoxColumnsReadOnly(readOnly: true);
-                btnChange.Text = "Изменить";
-                btnChange.BackColor = System.Drawing.SystemColors.Control;
-                btnChange.ForeColor = System.Drawing.SystemColors.ControlText;
-            }
-        }
-
-        private bool TrySaveChanges()
-        {
-            SafeEndEdit();
-
-            var result = dataManager.TrySaveChanges();
-
-            if (result.Success)
-            {
-                MessageBox.Show("Изменения успешно сохранены в базу данных.",
-                    "Сохранение", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return true;
-            }
-            else
-            {
-                MessageBox.Show($"Ошибка сохранения:\n{result.ErrorMessage}",
-                    "Ошибка базы данных", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return false;
-            }
-        }
-
-        #endregion
-
-        #region Отчёт
+        #region Отчёт в Word
 
         private void btnCreateReport_Click(object sender, EventArgs e)
         {
             if (dataGridViewMain.DataSource == null)
             {
-                MessageBox.Show("Нет данных для создания отчёта. Выберите таблицу.",
-                    "Внимание", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Нет данных для создания отчёта.", "Внимание",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -990,7 +1136,7 @@ namespace SummerPractice
 
         #endregion
 
-        #region Валидация и удаление
+        #region Валидация данных
 
         private void DataGridViewMain_DefaultValuesNeeded(object sender, DataGridViewRowEventArgs e)
         {
@@ -1044,7 +1190,7 @@ namespace SummerPractice
 
                     object origVal = drv.Row[colName];
                     bool wasFilled = origVal != null && origVal != DBNull.Value &&
-                                      !string.IsNullOrWhiteSpace(origVal.ToString());
+                                     !string.IsNullOrWhiteSpace(origVal.ToString());
 
                     if (hasOtherValues || wasFilled)
                     {
@@ -1112,6 +1258,8 @@ namespace SummerPractice
             if (!isAdminMode || e.KeyCode != Keys.Delete || dataGridViewMain.SelectedRows.Count == 0)
                 return;
 
+            var rowsToDelete = new List<DataRow>();
+
             foreach (DataGridViewRow dgvRow in dataGridViewMain.SelectedRows)
             {
                 if (dgvRow.IsNewRow) continue;
@@ -1123,95 +1271,66 @@ namespace SummerPractice
                 {
                     MessageBox.Show(
                         "Нельзя удалить выбранные строки — есть связанные данные:\n\n" +
-                        string.Join("\n", violations) +
-                        "\n\nСначала удалите связанные записи из дочерних таблиц.",
+                        string.Join("\n", violations),
                         "Нарушение связей", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
+                rowsToDelete.Add(row);
             }
 
+            if (rowsToDelete.Count == 0) return;
+
             var result = MessageBox.Show(
-                $"Удалить выбранные строки ({dataGridViewMain.SelectedRows.Count})?",
+                $"Удалить выбранные строки ({rowsToDelete.Count})?",
                 "Подтверждение удаления", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
             {
-                foreach (DataGridViewRow dgvRow in dataGridViewMain.SelectedRows)
+                foreach (DataRow dataRow in rowsToDelete)
                 {
-                    if (dgvRow.IsNewRow) continue;
-                    DataRow dataRow = GetCurrentDataRow(dgvRow);
-                    if (dataRow != null && dataRow.RowState != DataRowState.Deleted)
+                    if (dataRow.RowState != DataRowState.Deleted)
                         dataRow.Delete();
                 }
+                UpdateButtonsState();
             }
         }
 
-        private DataRow GetCurrentDataRow(DataGridViewRow dgvRow)
+        private void DataGridViewMain_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
-            if (dgvRow.DataBoundItem is DataRowView drv) return drv.Row;
-            return null;
+            e.ThrowException = false;
+            System.Diagnostics.Debug.WriteLine($"DataError: {e.Exception?.Message}");
+        }
+
+        private void DataGridViewMain_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+        {
+            if (!isAdminMode)
+                e.Cancel = true;
+        }
+
+        private void DataGridViewMain_CellEndEdit(object sender, DataGridViewCellEventArgs e)
+        {
+            UpdateButtonsState();
         }
 
         #endregion
 
-        #region Вспомогательные методы
+        #region Выход
 
-        private Type GetActualColumnType(DataColumn col)
+        private void btnExitToMain_Click(object sender, EventArgs e)
         {
-            if (col == null) return typeof(string);
-            if (dataManager?.OriginalTable == null || dataManager.OriginalTable.Rows.Count == 0)
-                return col.DataType;
-
-            try
+            if (HasUnsavedChanges())
             {
-                int checkRows = Math.Min(20, dataManager.OriginalTable.Rows.Count);
-                bool allNumbers = true;
-                bool allDates = true;
-                int nonEmptyCount = 0;
+                var result = MessageBox.Show(
+                    "Есть несохранённые изменения. Выйти без сохранения?",
+                    "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
-                for (int i = 0; i < checkRows; i++)
-                {
-                    object value = dataManager.OriginalTable.Rows[i][col];
-                    if (value == null || value == DBNull.Value ||
-                        string.IsNullOrWhiteSpace(value.ToString())) continue;
-
-                    nonEmptyCount++;
-                    string s = value.ToString().Trim();
-
-                    if (allNumbers && !decimal.TryParse(s,
-                            System.Globalization.NumberStyles.Any, null, out _))
-                        allNumbers = false;
-
-                    if (allDates && !DateTime.TryParse(s, out _))
-                        allDates = false;
-
-                    if (!allNumbers && !allDates) break;
-                }
-
-                if (allNumbers && nonEmptyCount > 0) return typeof(decimal);
-                if (allDates && nonEmptyCount > 0) return typeof(DateTime);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"GetActualColumnType error: {ex.Message}");
+                if (result == DialogResult.No)
+                    return;
             }
 
-            return col.DataType;
+            CurrentUser.Logout();
+            this.Close();
         }
-
-        private string GetDataTypeDescription(Type type)
-        {
-            if (type == typeof(string)) return "Текст (А-Я / Я-А)";
-            if (IsNumericType(type)) return "Число (0-9 / 9-0)";
-            if (type == typeof(DateTime)) return "Дата (старые-новые / новые-старые)";
-            if (type == typeof(bool)) return "Логический (Да/Нет)";
-            return type.Name;
-        }
-
-        private bool IsNumericType(Type type) =>
-            type == typeof(int) || type == typeof(long) || type == typeof(short) ||
-            type == typeof(byte) || type == typeof(decimal) || type == typeof(double) ||
-            type == typeof(float);
 
         #endregion
     }
